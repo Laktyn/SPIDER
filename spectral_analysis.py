@@ -1,3 +1,253 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+class spectrum:
+
+    def __init__(self, X, Y, x_type, y_type):
+
+        if x_type not in ["time", "freq", "wl"]:
+            raise Exception("x_type must be either \"time\" or \"freq\" or \"wl\".")
+        if y_type not in ["phase", "intensity"]:
+            raise Exception("y_type must be either \"phase\" or \"intensity\".")
+        if len(X) != len(Y):
+            raise Exception("X and Y axis must be of the same size.")
+
+        self.X = X
+        self.Y = Y
+        self.x_type = x_type
+        self.y_type = y_type
+        self.spacing = np.mean(np.diff(self.X))
+
+
+    def __len__(self):
+        return len(self.X)
+
+
+    def wl_to_freq(self, inplace = True):
+        '''
+        Transformation from wavelength domain [nm] to frequency domain [THz].
+        '''
+
+        c = 299792458 # light speed
+        freq = np.flip(c / self.X / 1e3) # output in THz
+        intensity = np.flip(self.Y)
+
+        if inplace == True:
+            self.X = freq
+            self.Y = intensity
+            self.x_type = "freq"
+        
+        else:
+            return spectrum(freq, intensity, "freq", self.y_type)
+        
+        
+    def constant_spacing(self, inplace = True):
+        '''
+        Transformation of a spectrum to have constant spacing on X-axis by linearly interpolating two nearest values on 
+        Y-axis.
+        '''
+
+        def linear_inter(a, b, c, f_a, f_b):
+            if a == b:
+                return (f_a + f_b)/2
+            
+            else:
+                f_c =  f_a * np.abs(b-c) / np.abs(b-a) + f_b * np.abs(a-c) / np.abs(b-a)
+                return f_c
+
+        length = self.__len__()
+
+        freq = spectrum.X.copy()
+        intens = spectrum.Y.copy()
+        new_freq = np.linspace(start = freq[0], stop = freq[-1], num = length, endpoint = True)
+        new_intens = []
+
+        j = 1
+        for f in range(length):         # each new interpolated intensity
+            interpolated_int = 0
+            
+            if f == 0:
+                new_intens.append(intens[0])
+                continue
+
+            if f == length - 1:
+                new_intens.append(intens[length - 1])
+                continue
+
+            for i in range(j, length):     # we compare with "each" measured intensity
+
+                if new_freq[f] <= freq[i]: # so for small i that's false. That's true for the first freq[i] greater than new_freq[f]
+                    
+                    interpolated_int = linear_inter(freq[i - 1], freq[i], new_freq[f], intens[i-1], intens[i])
+                    break
+
+                else:
+                    j += 1 # j is chosen in such a way, because for every new "freq" it will be greater than previous
+
+            new_intens.append(interpolated_int)
+
+        data = [[new_freq[i], new_intens[i]] for i in range(length)]
+        df_spectrum = pd.DataFrame(data)
+
+        if inplace == True:
+            self.X = new_freq
+            self.Y = new_intens
+        
+        else:
+            return spectrum(new_freq, new_intens, self.x_type, self.y_type)
+        
+
+        def fourier(self, inplace = True):
+            '''
+            Performs Fourier Transform from \"frequency\" to \"time\" domain.
+            '''
+
+            from scipy.fft import fft, fftfreq, fftshift
+            
+            # Exceptions
+
+            if self.x_type == "wl":
+                raise Exception("Before applying Fourier Transform, transform spectrum from wavelength to frequency domain.")
+            if self.x_type == "time":
+                raise Exception("Sticking to the convention: use Inverse Fourier Transform.")
+
+            # Fourier Transform
+
+            FT_intens = fft(self.Y, norm = "ortho")
+            FT_intens = fftshift(FT_intens)
+
+            time = fftfreq(self.__len__(), self.spacing())
+            time = fftshift(time)
+
+            if inplace:
+                self.X = time
+                self.Y = FT_intens
+                self.x_type = "time"
+            else:
+                return spectrum(time, FT_intens, "time", self.y_type)
+            
+        def inv_fourier(self, inplace = True):
+            '''
+            Performs Inverse Fourier Transform from \"time\" to \"frequency\" domain.
+            '''
+
+            from scipy.fft import ifft, fftfreq, ifftshift, fftshift
+
+            # prepare input
+
+            time = self.X.copy()
+            intens = self.Y.copy()
+
+            time = ifftshift(time)
+            intens = ifftshift(intens)
+
+            # Fourier Transform
+
+            FT_intens = ifft(intens, norm = "ortho")
+
+            freq = fftfreq(self.__len__(), self.spacing)
+            freq = fftshift(freq)
+
+            if inplace == True:
+                self.X = freq
+                self.Y = FT_intens
+                self.x_type = "freq"
+            else:
+                return spectrum(freq, FT_intens, "freq", self.y_type)
+        
+
+class ray:
+
+    def __init__(self, vertical_polarization, horizontal_polarization):
+        self.ver = vertical_polarization
+        self.hor = horizontal_polarization
+
+
+    def mix(self, transmission_matrix):
+        ver = transmission_matrix[0, 0]*self.ver.Y + transmission_matrix[0,1]*self.hor.Y
+        hor = transmission_matrix[0, 1]*self.ver.Y + transmission_matrix[1,1]*self.hor.Y
+        self.ver.Y = ver
+        self.hor.Y = hor
+
+
+    def loss(self, fraction):
+        self.ver.Y *= (1-fraction)
+        self.hor.Y *= (1-fraction)
+
+
+    def delay(self, polarization, delay):
+        
+        if polarization not in ["ver", "hor"]:
+            raise Exception("Polarization must be either \"ver\" or \"hor\".")
+
+        if polarization == "ver":
+            self.ver.Y *= np.exp(np.pi*2j*delay*self.ver.X)
+
+        elif polarization == "hor":
+            self.hor.Y *= np.exp(np.pi*2j*delay*self.hor.X)
+
+
+    def rotate(self, angle):    # there is small problem because after rotation interference pattern are the same and should be negatives
+        
+        hor = np.cos(angle)*self.hor.Y + np.sin(angle)*self.ver.Y
+        ver = np.sin(angle)*self.hor.Y + np.cos(angle)*self.ver.Y
+
+        self.hor.Y = hor
+        self.ver.Y = ver
+
+
+    def chirp(self, polarization, fiber_length):
+
+        import spectral_analysis as sa
+
+        if polarization not in ["ver", "hor"]:
+            raise Exception("Polarization must be either \"ver\" or \"hor\".")
+        
+        if polarization == "ver": spectr = self.hor.copy()
+        if polarization == "hor": spectr = self.ver.copy()
+        l_0 = 1560
+        c = 3*1e8
+        D_l = 17
+        omega = spectr.X*2*np.pi
+        omega_mean = sa.quantile(spectr, 1/2)
+        phase = l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
+        if polarization == "ver": self.ver.Y *= np.exp(1j*phase)
+        if polarization == "hor": self.hor.Y *= np.exp(1j*phase)
+
+
+    def shear(self, shift, polarization):
+
+        import spectral_analysis as sa
+
+        if polarization not in ["ver", "hor"]:
+            raise Exception("Polarization must be either \"ver\" or \"hor\".")
+
+        if polarization == "hor":
+            self.hor = sa.smart_shift(self.hor, shift)
+        if polarization == "ver":
+            self.ver = sa.smart_shift(self.ver, shift)
+
+    def polarizer(self, transmission_polar):
+
+        if transmission_polar not in ["ver", "hor"]:
+            raise Exception("Polarization must be either \"ver\" or \"hor\".")
+        if transmission_polar == "ver":
+            self.hor.Y *= 0
+        if transmission_polar == "hor":
+            self.ver.Y *= 0
+
+    def measure(self, start = "min", end = "max"):
+
+        import spectral_analysis as sa
+
+        Y = self.hor.Y*np.conjugate(self.hor.Y) + self.ver.Y*np.conjugate(self.ver.Y)
+        spectr = spectrum(self.hor.X, Y, "freq", "intensity")
+        sa.plot(spectr, title = "OSA", x_type = "freq", start = start, end = end, color = "green")
+        
+        return spectr
+            
+
 def find_period(spectrum, height = 0.5, hist = False):
     '''
     Function finds period in interference fringes by looking for wavelengths, where intensity is around given height and is decreasing. 
@@ -46,71 +296,6 @@ def find_period(spectrum, height = 0.5, hist = False):
         diff_cut = diff 
 
     return np.mean(diff_cut), np.std(diff_cut)
-
-
-
-def constant_spacing(spectrum):
-    '''
-    Transformation of a spectrum to have constant spacing on X-axis (wavelength) by linearly interpolating two nearest values on 
-    Y-axis (intensity).
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Wavelength/Frequency on X axis and Intensity on Y axis.
-
-    RETURNS:
-
-    Spectrum DataFrame with Wavelength/Frequency on X axis and Intensity on Y axis AND constant spacing on X axis.
-    '''
-
-    import numpy as np
-    import pandas as pd
-
-    def linear_inter(a, b, c, f_a, f_b):
-        if a == b:
-            return (f_a + f_b)/2
-        
-        else:
-            f_c =  f_a * np.abs(b-c) / np.abs(b-a) + f_b * np.abs(a-c) / np.abs(b-a)
-            return f_c
-
-    length = spectrum.shape[0]
-
-    freq = spectrum.values[:, 0].copy()
-    intens = spectrum.values[:, 1].copy()
-
-    new_freq = np.linspace(start = freq[0], stop = freq[-1], num = length, endpoint = True)
-    new_intens = []
-
-    j = 1
-    for f in range(length):         # each new interpolated intensity
-        interpolated_int = 0
-        
-        if f == 0:
-            new_intens.append(intens[0])
-            continue
-
-        if f == length - 1:
-            new_intens.append(intens[length - 1])
-            continue
-
-        for i in range(j, length):     # we compare with "each" measured intensity
-
-            if new_freq[f] <= freq[i]: # so for small i that's false. That's true for the first freq[i] greater than new_freq[f]
-                
-                interpolated_int = linear_inter(freq[i - 1], freq[i], new_freq[f], intens[i-1], intens[i])
-                break
-
-            else:
-                j += 1 # j is chosen in such a way, because for every new "freq" it will be greater than previous
-
-        new_intens.append(interpolated_int)
-
-    data = [[new_freq[i], new_intens[i]] for i in range(length)]
-    df_spectrum = pd.DataFrame(data)
-
-    return df_spectrum
-
 
 
 def interpolate(old_df, new_X):
@@ -236,113 +421,6 @@ def make_it_visible(spectrum, segment_length):
     return pd.DataFrame(np.array([[wl[i], new_intens[i]] for i in range(len(wl))]))
 
 
-
-def wl_to_freq(spectrum):
-    '''
-    Transformation from wavelength domain [nm] to frequency domain [THz].
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Wavelength [nm] on X axis and Intensity on Y axis.
-
-    RETURNS:
-
-    Spectrum DataFrame with Frequency [THz] on X axis and Intensity on Y axis.
-    '''
-
-    import numpy as np
-    import pandas as pd
-
-    c = 299792458 # light speed
-
-    FREQ = np.flip(c / spectrum.values[:, 0] / 1e3) # output in THz
-    INTENS = np.flip(spectrum.values[:, 1])
-    data = [[FREQ[i], INTENS[i]] for i in range(len(FREQ))]
-
-    return pd.DataFrame(data)
-
-
-
-def fourier(spectrum, absolute = False):
-    '''
-    Performs Fourier Transform (usually from \"frequency\" domain to \"time\" domain).
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Frequency on X axis and Intensity on Y axis.
-        
-    absolute - if \"True\", then absolute intensities are returned.
-
-    RETURNS:
-
-    Fourier Transformed spectrum DataFrame.
-    '''
-
-    import numpy as np
-    import pandas as pd
-    from scipy.fft import fft, fftfreq, fftshift
-
-    freq = spectrum.values[:, 0]
-    intens = spectrum.values[:, 1]
-    spacing = np.mean(np.diff(freq))
-
-    # Fourier Transform
-
-    FT_intens = fft(intens, norm = "ortho")
-    if absolute:
-         FT_intens = np.abs(FT_intens)
-    FT_intens = fftshift(FT_intens)
-
-    time = fftfreq(len(freq), spacing)
-    time = fftshift(time)
-
-    data = np.transpose(np.stack((time, FT_intens)))
-
-    return pd.DataFrame(data)
-
-
-
-def inv_fourier(spectrum, absolute = False):
-    '''
-    Performs Inverse Fourier Transform (usually from \"time\" domain to \"frequency\" domain).
-    
-    ARGUMENTS:
-
-    spectrum - DataFrame with Time on X axis and Intensity on Y axis.
-    
-    absolute - if \"True\", then absolute intensities are returned.
-
-    RETURNS:
-
-    Fourier Transformed spectrum DataFrame.
-    '''
-
-    import numpy as np
-    import pandas as pd
-    from scipy.fft import ifft, fftfreq, ifftshift, fftshift
-
-    # prepare input
-
-    time = spectrum.values[:, 0]
-    intens = spectrum.values[:, 1]
-    spacing = np.mean(np.diff(time))
-
-    time = ifftshift(time)
-    intens = ifftshift(intens)
-
-    # Fourier Transform
-
-    FT_intens = ifft(intens, norm = "ortho")
-    if absolute:
-         FT_intens = np.abs(FT_intens)
-
-    FT_intens = FT_intens
-    freq = fftfreq(len(time), spacing)
-    freq = fftshift(freq)
-
-    data = np.transpose(np.stack((freq, FT_intens)))
-
-    return pd.DataFrame(data)
 
 
 
