@@ -186,7 +186,6 @@ class spectrum:
         '''
 
         import numpy as np
-        import pandas as pd
         import matplotlib.pyplot as plt
 
         wl = self.X
@@ -226,7 +225,6 @@ class spectrum:
         '''
 
         import numpy as np
-        import pandas as pd
         from math import floor
 
         max = np.max(self.Y)
@@ -253,11 +251,11 @@ class spectrum:
 
         return level/max
     
+
     def quantile(self, q):
         '''
         Finds x in X axis such that integral of intensity to x is fraction of value q of whole intensity.
         '''
-        import pandas as pd
         import numpy as np
 
         sum = 0
@@ -269,6 +267,7 @@ class spectrum:
                 break
         return x
     
+
     def normalize(self, by = "highest", shift_to_zero = True, inplace = True):
         '''
         Normalize spectrum by linearly changing values of intensity and eventually shifting spectrum to zero.
@@ -281,8 +280,6 @@ class spectrum:
         shift_to_zero - if \"True\", then spectrum is shifted by X axis, by simply np.rolling it.
         '''
         import numpy as np
-        import pandas as pd
-        import spectral_analysis as sa
 
         if by not in ["highest", "intensity"]:
             raise Exception("\"by\" parameter must be either \"highest\" or \"intensity\".")
@@ -319,11 +316,10 @@ class spectrum:
         
     def FWMH(self):
         '''
-        Calculate Full Width at Half Maximum.
+        Calculate Full Width at Half Maximum. If multiple peaks are present in spectrum, the function might not work properly.
         '''
 
         import numpy as np
-        import pandas as pd
 
         peak = np.max(self.Y)
         for idx, y in enumerate(self.Y):
@@ -337,6 +333,55 @@ class spectrum:
         width *= (self.X[1]-self.X[2])
 
         return np.abs(width)
+
+
+    def remove_offset(self, period, inplace = True):
+        '''
+        The function improves visibility of interference fringes by subtracting moving minimum i. e. minimum of a segment of length \"period\",
+        centered at given point.
+        '''
+
+        import numpy as np
+        from math import floor as flr
+
+        idx_period = flr(period/self.spacing)
+
+        new_Y = []
+        for i in range(self.__len__()):
+            left = np.max([i - flr(idx_period/2), 0])
+            right = np.min([i + flr(idx_period/2), self.__len__() - 1])
+            new_Y.append(self.Y - np.min(self.Y[left:right]))
+        new_Y = np.array(new_Y)
+
+        if inplace == True:
+            self.Y = new_Y
+
+        if inplace == False:
+            return spectrum(self.X, new_Y, self.x_type, self.y_type)
+
+
+    def moving_average(self, period, inplace = True):
+        '''
+        Smooth spectrum by taking moving average with \"period\" in X axis units. On the beginning and ending of spectrum shorter segments are used.
+        '''
+
+        from math import floor as flr
+        import numpy as np
+
+        idx_period = flr(period/self.spacing)
+
+        new_Y = []
+        for i in range(self.__len__()):
+            left = np.max([i - flr(idx_period/2), 0])
+            right = np.min([i + flr(idx_period/2), self.__len__() - 1])
+            new_Y.append(np.mean(self.Y[left:right]))
+        new_Y = np.array(new_Y)
+
+        if inplace == True:
+            self.Y = new_Y
+
+        if inplace == False:
+            return spectrum(self.X, new_Y, self.x_type, self.y_type)
 
 
 
@@ -362,7 +407,6 @@ def interpolate(old_spectrum, new_X):
     Interpolated spectrum.
     '''
     
-    import pandas as pd
     import numpy as np
     from scipy.interpolate import CubicSpline
 
@@ -400,7 +444,7 @@ def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_t
     
     import matplotlib.pyplot as plt
     import numpy as np
-    import pandas as pd
+
     colors = ["violet", "blue", "green", "yellow", "orange", "red", "brown", "black"]
     for c, spectrum in enumerate(spectra):
         safe_spectrum = spectrum.copy()
@@ -432,6 +476,9 @@ def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_t
     if isinstance(legend, list):
         plt.legend(legend, bbox_to_anchor = [1, 1])
     plt.show()       
+
+
+
 
 
 
@@ -530,59 +577,6 @@ class ray:
         sa.plot(spectr, title = "OSA", x_type = "freq", start = start, end = end, color = "green")
         
         return spectr
-
-
-def make_it_visible(spectrum, segment_length):
-    '''
-    The function improves visibility of interference fringes by subtracting local minima of spectrum. Each local minimum is a minimum of a
-    segment of segment_length points. Last segment might be shorter.
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Wavelength/Frequency on X axis and Intensity on Y axis.
-
-    segment_length - length of a segment of which we take a local minimum. It needs to be chosen manually and carefully as it highly
-    influences quality of visibility.
-
-    RETURNS:
-
-    Spectrum DataFrame spectrum with subtracted offset and increased visibility
-    '''
-
-    import numpy as np
-    import pandas as pd
-    from math import floor as flr
-
-    wl = spectrum.values[:, 0]
-    intens = spectrum.values[:, 1]
-
-    minima = []
-    samples_num = len(intens) // segment_length + 1
-
-    # find "local" minima
-
-    for i in range(samples_num):
-        start = segment_length*i
-        end = segment_length*(i+1)
-
-        if start >= len(intens): break
-
-        if end > len(intens) - 1:
-            end = len(intens)
-
-        minimum = np.min(intens[start: end])
-        minima.append(minimum)
-
-    # subtract the minima
-
-    new_intens = []
-    for i in range(len(intens)):
-        new =  intens[i] - minima[flr(i/segment_length)]
-        new_intens.append(new)
-
-    # and return a nice dataframe
-
-    return pd.DataFrame(np.array([[wl[i], new_intens[i]] for i in range(len(wl))]))
 
 
 def cut(spectrum, start, end, how = "units"):
