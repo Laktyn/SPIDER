@@ -2,6 +2,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+
+#                   --------------
+#                   SPECTRUM CLASS
+#                   --------------
+
+
 class spectrum:
 
     def __init__(self, X, Y, x_type, y_type):
@@ -22,6 +28,12 @@ class spectrum:
 
     def __len__(self):
         return len(self.X)
+    
+
+    def copy(self):
+        X_copied = self.X.copy()
+        Y_copied = self.Y.copy()
+        return (spectrum(X_copied, Y_copied, self.x_type, self.y_type))
 
 
     def wl_to_freq(self, inplace = True):
@@ -98,64 +110,336 @@ class spectrum:
             return spectrum(new_freq, new_intens, self.x_type, self.y_type)
         
 
-        def fourier(self, inplace = True):
-            '''
-            Performs Fourier Transform from \"frequency\" to \"time\" domain.
-            '''
+    def fourier(self, inplace = True):
+        '''
+        Performs Fourier Transform from \"frequency\" to \"time\" domain.
+        '''
 
-            from scipy.fft import fft, fftfreq, fftshift
-            
-            # Exceptions
-
-            if self.x_type == "wl":
-                raise Exception("Before applying Fourier Transform, transform spectrum from wavelength to frequency domain.")
-            if self.x_type == "time":
-                raise Exception("Sticking to the convention: use Inverse Fourier Transform.")
-
-            # Fourier Transform
-
-            FT_intens = fft(self.Y, norm = "ortho")
-            FT_intens = fftshift(FT_intens)
-
-            time = fftfreq(self.__len__(), self.spacing())
-            time = fftshift(time)
-
-            if inplace:
-                self.X = time
-                self.Y = FT_intens
-                self.x_type = "time"
-            else:
-                return spectrum(time, FT_intens, "time", self.y_type)
-            
-        def inv_fourier(self, inplace = True):
-            '''
-            Performs Inverse Fourier Transform from \"time\" to \"frequency\" domain.
-            '''
-
-            from scipy.fft import ifft, fftfreq, ifftshift, fftshift
-
-            # prepare input
-
-            time = self.X.copy()
-            intens = self.Y.copy()
-
-            time = ifftshift(time)
-            intens = ifftshift(intens)
-
-            # Fourier Transform
-
-            FT_intens = ifft(intens, norm = "ortho")
-
-            freq = fftfreq(self.__len__(), self.spacing)
-            freq = fftshift(freq)
-
-            if inplace == True:
-                self.X = freq
-                self.Y = FT_intens
-                self.x_type = "freq"
-            else:
-                return spectrum(freq, FT_intens, "freq", self.y_type)
+        from scipy.fft import fft, fftfreq, fftshift
         
+        # Exceptions
+
+        if self.x_type == "wl":
+            raise Exception("Before applying Fourier Transform, transform spectrum from wavelength to frequency domain.")
+        if self.x_type == "time":
+            raise Exception("Sticking to the convention: use Inverse Fourier Transform.")
+
+        # Fourier Transform
+
+        FT_intens = fft(self.Y, norm = "ortho")
+        FT_intens = fftshift(FT_intens)
+
+        time = fftfreq(self.__len__(), self.spacing())
+        time = fftshift(time)
+
+        if inplace:
+            self.X = time
+            self.Y = FT_intens
+            self.x_type = "time"
+        else:
+            return spectrum(time, FT_intens, "time", self.y_type)
+            
+
+    def inv_fourier(self, inplace = True):
+        '''
+        Performs Inverse Fourier Transform from \"time\" to \"frequency\" domain.
+        '''
+
+        from scipy.fft import ifft, fftfreq, ifftshift, fftshift
+
+        # prepare input
+
+        time = self.X.copy()
+        intens = self.Y.copy()
+
+        time = ifftshift(time)
+        intens = ifftshift(intens)
+
+        # Fourier Transform
+
+        FT_intens = ifft(intens, norm = "ortho")
+
+        freq = fftfreq(self.__len__(), self.spacing)
+        freq = fftshift(freq)
+
+        if inplace == True:
+            self.X = freq
+            self.Y = FT_intens
+            self.x_type = "freq"
+        else:
+            return spectrum(freq, FT_intens, "freq", self.y_type)
+        
+
+    def find_period(self, height = 0.5, hist = False):
+        '''
+        Function finds period in interference fringes by looking for wavelengths, where intensity is around given height and is decreasing. 
+
+        ARGUMENTS:
+
+        height - height, at which we to look for negative slope. Height is the fraction of maximum intensity.
+
+        hist - if to plot the histogram of all found periods.
+
+        RETURNS:
+
+        (mean, std) - mean and standard deviation of all found periods. 
+        '''
+
+        import numpy as np
+        import pandas as pd
+        import matplotlib.pyplot as plt
+
+        wl = self.X
+        intens = self.Y
+        h = height * np.max(intens)
+        nodes = []
+
+        for i in range(2, len(intens) - 2):
+            # decreasing
+            if intens[i-2] > intens[i-1] > h > intens[i] > intens[i+1] > intens[i+2]:
+                nodes.append(wl[i])
+
+        diff = np.diff(np.array(nodes))
+
+        if hist:
+            plt.hist(diff, color = "orange")
+            plt.xlabel("Period length [nm]")
+            plt.ylabel("Counts")
+            plt.show()
+
+        mean = np.mean(diff)
+        std = np.std(diff)
+
+        if len(diff) > 4:
+            diff_cut = [d for d in diff if np.abs(d - mean) < std]
+        else:
+            diff_cut = diff 
+
+        return np.mean(diff_cut), np.std(diff_cut)
+    
+
+    def visibility(self):
+        '''
+        BE AWARE: not classical concept of visibility is applied. 
+        
+        Function returns float in range (0, 1) which is the fraction of maximum intensity, at which the greatest number of fringes is observable.
+        '''
+
+        import numpy as np
+        import pandas as pd
+        from math import floor
+
+        max = np.max(self.Y)
+
+        # Omg, this loop is so smart. Sometimes I impress myself.
+
+        heights = []
+        sample_levels = 100
+        for height in np.linspace(0, max, sample_levels, endpoint = True):
+            if height == 0: 
+                continue
+            safe_Y = self.Y.copy()
+            safe_Y[safe_Y < height] = 0
+            safe_Y[safe_Y > 0] = 1
+            safe_Y += np.roll(safe_Y, shift = 1)
+            safe_Y[safe_Y == 2] = 0
+            heights.append(np.sum(safe_Y))
+
+        heights = np.array(heights)
+        fring_num = np.max(heights)
+        indices = np.array([i for i in range(sample_levels-1) if heights[i] == fring_num])
+        the_index = indices[floor(len(indices)/2)] 
+        level = the_index/sample_levels*max
+
+        return level/max
+    
+    def quantile(self, q):
+        '''
+        Finds x in X axis such that integral of intensity to x is fraction of value q of whole intensity.
+        '''
+        import pandas as pd
+        import numpy as np
+
+        sum = 0
+        all = np.sum(np.abs(self.Y))
+        for i in range(self.__len__()):
+            sum += np.abs(self.Y)
+            if sum >= all*q:
+                x = self.X[i]
+                break
+        return x
+    
+    def normalize(self, by = "highest", shift_to_zero = True, inplace = True):
+        '''
+        Normalize spectrum by linearly changing values of intensity and eventually shifting spectrum to zero.
+
+        ARGUMENTS:
+
+        by - way of normalizing the spectrum. If \"highest\", then the spectrum is scaled to 1, so that its greatest value is 1. 
+        If \"intensity\", then spectrum is scaled, so that its integral is equal to 1.
+        
+        shift_to_zero - if \"True\", then spectrum is shifted by X axis, by simply np.rolling it.
+        '''
+        import numpy as np
+        import pandas as pd
+        import spectral_analysis as sa
+
+        if by not in ["highest", "intensity"]:
+            raise Exception("\"by\" parameter must be either \"highest\" or \"intensity\".")
+
+        X_safe = self.X.copy()
+        Y_safe = self.Y.copy()
+        safe_spectrum = spectrum(X_safe, Y_safe, self.x_type, self.y_type)
+
+        if by == "highest":
+            max = np.max(np.abs(Y_safe))
+            max_idx = np.argmax(np.abs(Y_safe))
+            Y_safe /= max
+            if shift_to_zero:
+                zero_idx = np.searchsorted(X_safe, 0)
+                shift_idx = max_idx - zero_idx
+                X_safe = np.roll(X_safe, shift_idx)
+
+        if by == "intensity":
+            integral = np.sum(np.abs(Y_safe))
+            median = safe_spectrum.quantile(1/2)
+            max_idx = np.searchsorted(np.abs(Y_safe), median)
+            Y_safe /= integral
+            if shift_to_zero:
+                zero_idx = np.searchsorted(X_safe, 0)
+                shift_idx = max_idx - zero_idx
+                X_safe = np.roll(X_safe, shift_idx)
+
+        if inplace == True:
+            self.X = X_safe
+            self.Y = Y_safe
+        
+        if inplace == False:
+            return spectrum(X_safe, Y_safe, self.x_type, self.y_type)
+        
+    def FWMH(self):
+        '''
+        Calculate Full Width at Half Maximum.
+        '''
+
+        import numpy as np
+        import pandas as pd
+
+        peak = np.max(self.Y)
+        for idx, y in enumerate(self.Y):
+            if y > peak/2:
+                left = idx
+        for idx, y in enumerate(np.flip(self.Y)):
+            if y > peak/2:
+                right = self.__len__() - idx
+
+        width = right-left
+        width *= (self.X[1]-self.X[2])
+
+        return np.abs(width)
+
+
+
+#                   ------------------------
+#                   SPECTRUM CLASS FUNCTIONS
+#                   ------------------------
+
+
+
+def interpolate(old_spectrum, new_X):
+    '''
+    Interpolate rarely sampled spectrum for values in new X-axis. Interpolation is performed with cubic functions. If y-values to be interpolated are complex, 
+    their absolute value is used.
+
+    ARGUMENTS:
+
+    old_spectrum - spectrum that is the basis for interpolation.
+
+    new_X - new X axis (i. e. frequencies or wavelengths). Interpolated Y-values are calculated for values from new_X.
+
+    RETURNS:
+
+    Interpolated spectrum.
+    '''
+    
+    import pandas as pd
+    import numpy as np
+    from scipy.interpolate import CubicSpline
+
+    X = np.real(old_spectrum.X)
+    Y = np.abs(old_spectrum.Y)
+
+    model = CubicSpline(X, Y)
+    new_Y = model(np.real(new_X))
+
+    return spectrum(new_X, new_Y, old_spectrum.x_type, old_spectrum.y_type)
+
+
+def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_type = "freq", start = "min", end = "max", abs = False):
+    '''
+    Show several spectra on single plot.
+
+    ARGUMENTS:
+
+    spectra - list with spectra to be show on plot.
+
+    title - title of the plot.
+
+    legend - list with names of subsequent spectra. If \"None\", then no legend is shown.
+
+    y_type - unit of Y-axis.
+
+    x-type - unit of X-axis.
+
+    start - starting point (in X-axis units) of a area to be shown on plot. If \"min\", then plot starts with lowest X-value in all spectra.
+
+    end - ending point (in X-axis units) of a area to be shown on plot. If \"max\", then plot ends with highest X-value in all spectra.
+
+    abs - if \"True\", then absolute values of spectra is plotted.
+    '''
+    
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    colors = ["violet", "blue", "green", "yellow", "orange", "red", "brown", "black"]
+    for c, spectrum in enumerate(spectra):
+        safe_spectrum = spectrum.copy()
+        if abs:
+            safe_spectrum.Y = np.abs(safe_spectrum.Y)
+        if start == "min":
+            s = 0
+        else:
+            s = np.searchsorted(safe_spectrum.X, start)
+        if end == "max":
+            e = len(safe_spectrum) - 1
+        else:
+            e = np.searchsorted(safe_spectrum.X, end)
+
+        plt.plot(safe_spectrum.X[s:e], safe_spectrum.Y[s:e], color = colors[c])
+
+    plt.grid()
+    plt.title(title)
+    if y_type == "int":
+        plt.ylabel("Intensity")
+    if y_type == "phase":
+        plt.ylabel("Spectral phase [rad]")    
+    if x_type == "wl":
+        plt.xlabel("Wavelength [nm]")
+    if x_type == "freq":
+        plt.xlabel("Frequency [THz]")
+    if x_type == "time":
+        plt.xlabel("Time [ps]")
+    if isinstance(legend, list):
+        plt.legend(legend, bbox_to_anchor = [1, 1])
+    plt.show()       
+
+
+
+#                   ---------
+#                   RAY CLASS
+#                   ---------
+
+
 
 class ray:
 
@@ -237,7 +521,7 @@ class ray:
         if transmission_polar == "hor":
             self.ver.Y *= 0
 
-    def measure(self, start = "min", end = "max"):
+    def OSA(self, start = "min", end = "max"):
 
         import spectral_analysis as sa
 
@@ -246,126 +530,6 @@ class ray:
         sa.plot(spectr, title = "OSA", x_type = "freq", start = start, end = end, color = "green")
         
         return spectr
-            
-
-def find_period(spectrum, height = 0.5, hist = False):
-    '''
-    Function finds period in interference fringes by looking for wavelengths, where intensity is around given height and is decreasing. 
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Wavelength\Frequency in first column and Intensity in second.
-
-    height - height, at which we to look for negative slope. Height is the fraction of maximum intensity.
-
-    hist - if to plot the histogram of all found periods.
-
-    RETURNS:
-
-    (mean, std) - mean and standard deviation of all found periods. 
-    '''
-
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-
-    wl = spectrum.values[:, 0]
-    intens = spectrum.values[:, 1]
-    h = height * np.max(intens)
-    nodes = []
-
-    for i in range(2, len(intens) - 2):
-        # decreasing
-        if intens[i-2] > intens[i-1] > h > intens[i] > intens[i+1] > intens[i+2]:
-            nodes.append(wl[i])
-
-    diff = np.diff(np.array(nodes))
-
-    if hist:
-        plt.hist(diff, color = "orange")
-        plt.xlabel("Period length [nm]")
-        plt.ylabel("Counts")
-        plt.show()
-
-    mean = np.mean(diff)
-    std = np.std(diff)
-
-    if len(diff)>4:
-        diff_cut = [d for d in diff if np.abs(d - mean) < std]
-    else:
-        diff_cut = diff 
-
-    return np.mean(diff_cut), np.std(diff_cut)
-
-
-def interpolate(old_df, new_X):
-    '''
-    Interpolate rarely sampled spectrum DataFrame for values in new X-axis. Interpolation is performed with cubic functions.
-
-    ARGUMENTS:
-
-    old_df - DataFrame spectrum that is the basis for interpolation.
-
-    new_X - new X axis (i. e. frequencies or wavelengths). Interpolated Y-values are calculated for values from new_X.
-
-    RETURNS:
-
-    Interpolated spectrum DataFrame.
-    '''
-    
-    import pandas as pd
-    import numpy as np
-    from scipy.interpolate import CubicSpline
-
-    X = np.real(old_df.values[:, 0])
-    Y = np.real(old_df.values[:, 1])
-
-    model = CubicSpline(X, Y)
-    new_Y = model(np.real(new_X))
-
-    data = np.transpose(np.stack((np.real(new_X), new_Y)))
-    return pd.DataFrame(data)
-
-
-
-def find_visibility(spectrum):
-    '''
-    BE AWARE: not classical concept of visibility is applied. 
-    
-    Function returns float in range (0, 1) which is the fraction of maximum intensity, at which the visibility of fringes is the best.
-    '''
-
-    import numpy as np
-    import pandas as pd
-    from math import floor
-
-    safe_spectrum = spectrum.copy()
-    Y = safe_spectrum.values[:, 1]
-    X = safe_spectrum.values[:, 0]
-    max = np.max(Y)
-
-    # Omg, this loop is so smart. Sometimes I impress myself.
-
-    heights = []
-    sample_levels = 100
-    for height in np.linspace(0, max, sample_levels, endpoint = True):
-        if height == 0: 
-            continue
-        safe_Y = Y.copy()
-        safe_Y[safe_Y < height] = 0
-        safe_Y[safe_Y > 0] = 1
-        safe_Y += np.roll(safe_Y, shift = 1)
-        safe_Y[safe_Y == 2] = 0
-        heights.append(np.sum(safe_Y))
-
-    heights = np.array(heights)
-    fring_num = np.max(heights)
-    indices = np.array([i for i in range(sample_levels-1) if heights[i] == fring_num])
-    the_index = indices[floor(len(indices)/2)] 
-    level = the_index/sample_levels*max
-
-    return level/max
-
 
 
 def make_it_visible(spectrum, segment_length):
@@ -421,9 +585,6 @@ def make_it_visible(spectrum, segment_length):
     return pd.DataFrame(np.array([[wl[i], new_intens[i]] for i in range(len(wl))]))
 
 
-
-
-
 def cut(spectrum, start, end, how = "units"):
     '''
     Returns the \"spectrum\" limited to the borders. 
@@ -436,7 +597,8 @@ def cut(spectrum, start, end, how = "units"):
 
     end - end of the segment, to which the spectrum is limited.
 
-    how - defines meaning of \"start\" and \"end\". If \"units\", then those are values on X-axis. If \"fraction\", then the fraction of length of X-axis. If \"index\", then corresponding indices of border observations.
+    how - defines meaning of \"start\" and \"end\". If \"units\", then those are values on X-axis. 
+    If \"fraction\", then the fraction of length of X-axis. If \"index\", then corresponding indices of border observations.
     
     RETURNS:
 
@@ -462,35 +624,9 @@ def cut(spectrum, start, end, how = "units"):
         cut_spectrum = pd.DataFrame(spectrum.values[start:end, :]) 
 
     else:
-        raise ValueError("Argument not defined.")
+        raise Exception("Argument not defined.")
 
     return cut_spectrum
-
-
-
-def FWMH(spectrum):
-    '''
-    Calculate FWHM (Full Width at Half Maximum) for given spectrum.
-    '''
-
-    import numpy as np
-    import pandas as pd
-
-    Y = spectrum.values[:, 1]
-    X = spectrum.values[:, 0]
-    peak = np.max(Y)
-    for idx, y in enumerate(Y):
-        if y > peak/2:
-            left = idx
-    for idx, y in enumerate(np.flip(Y)):
-        if y > peak/2:
-            right = len(Y) - idx
-
-    width = right-left
-    width *= (X[1]-X[2])
-
-    return np.abs(width)
-
 
 
 def plot(spectrum, color = "darkviolet", title = "Spectrum", x_type = "wl", y_type = "int", what_to_plot = "abs", start = "min", end = "max"):
@@ -612,68 +748,6 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", x_type = "wl", y_ty
 
     plt.show()
 
-
-
-def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_type = "freq", start = "min", end = "max", abs = False):
-    '''
-    Show several spectra on single plot.
-
-    ARGUMENTS:
-
-    spectra - list with DataFrames containing spectra.
-
-    title - title of the plot.
-
-    legend - list with names of subsequent spectra. If \"None\", then no legend is shown.
-
-    y_type - unit of Y-axis.
-
-    x-type - unit of X-axis.
-
-    start - starting point (in X-axis units) of a area to be shown on plot. If \"min\", then plot starts with lowest X-value in all spectra.
-
-    end - ending point (in X-axis units) of a area to be shown on plot. If \"max\", then plot ends with highest X-value in all spectra.
-
-    abs - if \"True\", then absolute values of spectra is plotted.
-    '''
-    
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import pandas as pd
-    colors = ["violet", "blue", "green", "yellow", "orange", "red", "brown", "black"]
-    for c, spectrum in enumerate(spectra):
-        safe_spectrum = spectrum.copy()
-        if abs:
-            spectrum.values[:,1] = np.abs(spectrum.values[:,1])
-        if start == "min":
-            s = 0
-        else:
-            s = np.searchsorted(safe_spectrum.values[:, 0], start)
-        if end == "max":
-            e = len(safe_spectrum.values[:, 0]) - 1
-        else:
-            e = np.searchsorted(safe_spectrum.values[:, 0], end)
-
-        plt.plot(spectrum.values[s:e, 0], spectrum.values[s:e, 1], color = colors[c])
-
-    plt.grid()
-    plt.title(title)
-    if y_type == "int":
-        plt.ylabel("Intensity")
-    if y_type == "phase":
-        plt.ylabel("Spectral phase [rad]")    
-    if x_type == "wl":
-        plt.xlabel("Wavelength [nm]")
-    if x_type == "freq":
-        plt.xlabel("Frequency [THz]")
-    if x_type == "time":
-        plt.xlabel("Time [ps]")
-    if isinstance(legend, list):
-        plt.legend(legend, bbox_to_anchor = [1, 1])
-    plt.show()
-
-
-
 def shift(spectrum, shift):
     '''
     Shifts the spectrum by X axis. Warning: only values on X axis are modified.
@@ -758,27 +832,6 @@ def replace_with_zeros(spectrum, start, end):
     return pd.DataFrame(data)
 
 
-
-def quantile(spectrum, q):
-    '''
-    Finds x in X axis such that integral of intensity to x is fraction of value q of whole intensity.
-    '''
-    import pandas as pd
-    import numpy as np
-
-    data = spectrum.values.copy()
-
-    sum = 0
-    all = np.sum(np.abs(data[:, 1]))
-    for i in range(len(data[:, 0])):
-        sum += np.abs(data[i, 1])
-        if sum >= all*q:
-            x = data[i, 0]
-            break
-    return x
-
-
-
 def smart_shift(spectrum, shift = "center"):
     '''
     Shift spectrum by rolling Y-axis.
@@ -813,57 +866,6 @@ def smart_shift(spectrum, shift = "center"):
     data[:, 1] = np.roll(data[:, 1], index_shift)
         
     return pd.DataFrame(data)
-
-
-
-def normalize(spectrum, by = "highest", shift_to_zero = True):
-    '''
-    Normalize spectrum by linearly changing values of intensity and eventually shifting spectrum to zero.
-
-    ARGUMENTS:
-
-    spectrum - pd.DataFrame with X-axis in first column and Y-axis in second column.
-
-    by - way of normalizing the spectrum. If \"highest\", then the spectrum is scaled to 1, so that its greatest value is 1. If \"intensity\", then spectrum is scaled, so that its integral is equal to 1.
-    
-    shift_to_zero - if \"True\" then spectrum is shifted by X axis, by simply np.rolling it.
-
-    RETURNS:
-
-    normalized spectrum - standard pd.DataFrame format.
-    '''
-    import numpy as np
-    import pandas as pd
-    import spectral_analysis as sa
-
-    if by not in ["highest", "intensity"]:
-        raise Exception("\"by\" parameter must be either \"highest\" or \"intensity\".")
-
-    safe_spectrum = spectrum.copy()
-    X = safe_spectrum.values[:,0]
-    Y = safe_spectrum.values[:,1]
-    
-    if by == "highest":
-        max = np.max(np.abs(Y))
-        max_idx = np.argmax(np.abs(Y))
-        Y /= max
-        if shift_to_zero:
-            zero_idx = np.searchsorted(X, 0)
-            shift_idx = max_idx - zero_idx
-            X = np.roll(X, shift_idx)
-
-    if by == "intensity":
-        integral = np.sum(np.abs(Y))
-        median = sa.quantile(safe_spectrum, 1/2)
-        max_idx = np.searchsorted(np.abs(Y), median)
-        Y /= integral
-        if shift_to_zero:
-            zero_idx = np.searchsorted(X, 0)
-            shift_idx = max_idx - zero_idx
-            X = np.roll(X, shift_idx)
-
-    return pd.DataFrame(np.transpose(np.stack((X, Y))))
-
 
 
 def find_shift(spectrum1, spectrum2, spectrum_in = "wl"):
@@ -950,6 +952,10 @@ def recover_pulse(phase_df, intensity_df):
     spectrum = pd.DataFrame(np.transpose(np.stack((X, complex_Y))))
     return sa.fourier(spectrum)
 
+
+#                   ----------------
+#                   SPIDER ALGORITHM
+#                   ----------------
 
 
 def spider(phase_spectrum, 
