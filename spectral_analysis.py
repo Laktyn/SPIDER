@@ -110,6 +110,53 @@ class spectrum:
             return spectrum(new_freq, new_intens, self.x_type, self.y_type)
         
 
+    def cut(self, start, end, how = "units", inplace = True):
+        '''
+        Limit spectrum to a segment [\"start\", \"end\"].
+
+        ARGUMENTS:
+
+        start - start of the segment, to which the spectrum is limited.
+
+        end - end of the segment, to which the spectrum is limited.
+
+        how - defines meaning of \"start\" and \"end\". If \"units\", then those are values on X-axis. 
+        If \"fraction\", then the fraction of length of X-axis. If \"index\", then corresponding indices of border observations.
+        '''
+
+        import pandas as pd
+        import numpy as np
+        from math import floor
+
+        if how == "units":
+            s = np.searchsorted(self.X, start)
+            e = np.searchsorted(self.X, end)
+            
+
+        elif how == "fraction":
+            s = floor(start*self.__len__())
+            e = floor(end*self.__len__())
+
+        elif how == "index":
+            s = start
+            e = end
+
+        else:
+            raise Exception("\"how\" must be either \"units\", \"fraction\" or \"index\".")
+
+        new_X = self.X.copy()
+        new_Y = self.Y.copy()
+        new_X = new_X[s:e]
+        new_Y = new_Y[s:e]
+
+        if inplace == True:
+            self.X = new_X
+            self.Y = new_Y
+        
+        else:
+            return spectrum(new_X, new_Y, self.x_type, self.y_type)
+        
+
     def fourier(self, inplace = True):
         '''
         Performs Fourier Transform from \"frequency\" to \"time\" domain.
@@ -265,6 +312,7 @@ class spectrum:
             if sum >= all*q:
                 x = self.X[i]
                 break
+
         return x
     
 
@@ -419,7 +467,116 @@ def interpolate(old_spectrum, new_X):
     return spectrum(new_X, new_Y, old_spectrum.x_type, old_spectrum.y_type)
 
 
-def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_type = "freq", start = "min", end = "max", abs = False):
+def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs", start = None, end = None):
+    '''
+    Fast spectrum plotting using matplotlib.pyplot library.
+
+    ARGUMENTS:
+
+    spectrum - DataFrame with Intensity on Y axis.
+
+    color - color of the plot.
+
+    title - title of the plot.
+
+    x_type - \"wl\" (Wavelength) or \"freq\" (Frequency) or \"time\" (Time). Determines the label of X-axis.
+
+    y_type = \"phase\" (Spectral phase) or \"int\" (Intensity). Determines the label of Y-axis.
+
+    start - starting point (in X-axis units) of a area to be shown on plot. If \"min\", then plot starts with lowest X-value in all spectra.
+
+    end - ending point (in X-axis units) of a area to be shown on plot. If \"max\", then plot ends with highest X-value in all spectra.
+
+    what_to_plot - either \"abs\" or \"imag\" or \"real\".
+
+    RETURNS:
+
+    Continuous plot of the \"spectrum\"/.
+    '''
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from math import floor, log10
+
+    spectrum_safe = spectrum.copy()
+    
+    # simple function to round to significant digits
+
+    def round_to_dig(x, n):
+        return round(x, -int(floor(log10(abs(x)))) + n - 1)
+
+    # invalid arguments
+    
+    if what_to_plot not in ("abs", "imag", "real"):
+        raise Exception("Input \"what_to_plot\" not defined.")
+
+    # if we dont want to plot whole spectrum
+
+    n_points = len(spectrum_safe)
+
+    to_cut = False
+    inf = round(np.real(spectrum_safe.X[0]))
+    sup = round(np.real(spectrum_safe.X[-1]))
+
+    s = 0
+    e = -1
+
+    if start != None:
+        s = np.searchsorted(spectrum_safe.X, start)
+        to_cut = True
+
+    if end != None:        
+        e = np.searchsorted(spectrum_safe.X, end)
+        to_cut = True
+
+    spectrum_safe.cut(s, e, how = "index") 
+    
+    # what do we want to have on Y axis
+
+    if what_to_plot == "abs":
+        spectrum_safe.Y = np.abs(spectrum_safe.Y)
+    if what_to_plot == "real":
+        spectrum_safe.Y = np.real(spectrum_safe.Y)
+    if what_to_plot == "imag":
+        spectrum_safe.Y = np.imag(spectrum_safe.Y)
+
+    # start to plot
+
+    f, ax = plt.subplots()
+    plt.plot(spectrum_safe.X, spectrum_safe.Y, color = color)
+    plt.grid()
+    if to_cut:
+        plt.title(title + " [only part shown]")
+    else:
+        plt.title(title)
+    if spectrum_safe.y_type == "phase":
+        plt.ylabel("Spectral phase [rad]")
+    if spectrum_safe.y_type == "intensity":
+        plt.ylabel("Intensity")    
+    if spectrum_safe.x_type == "wl":
+        plt.xlabel("Wavelength [nm]")
+        unit = "nm"
+    if spectrum_safe.x_type == "freq":
+        plt.xlabel("Frequency [THz]")
+        unit = "THz"
+    if spectrum_safe.x_type == "time":
+        plt.xlabel("Time [ps]")
+        unit = "ps"
+
+    # quick stats
+    
+    spacing = round_to_dig(spectrum_safe.spacing, 3)
+    p_per_unit = floor(1/spectrum_safe.spacing)
+
+    if to_cut:
+        plt.text(1.05, 0.85, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) + "\nFull X-axis range: {} - {} ".format(inf, sup) + unit , transform = ax.transAxes)
+    else:
+        plt.text(1.05, 0.9, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) , transform = ax.transAxes)
+
+    plt.show()
+
+
+def compare_plots(spectra, title = "Spectra", legend = None, start = None, end = None, abs = False):
     '''
     Show several spectra on single plot.
 
@@ -431,10 +588,6 @@ def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_t
 
     legend - list with names of subsequent spectra. If \"None\", then no legend is shown.
 
-    y_type - unit of Y-axis.
-
-    x-type - unit of X-axis.
-
     start - starting point (in X-axis units) of a area to be shown on plot. If \"min\", then plot starts with lowest X-value in all spectra.
 
     end - ending point (in X-axis units) of a area to be shown on plot. If \"max\", then plot ends with highest X-value in all spectra.
@@ -445,16 +598,34 @@ def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_t
     import matplotlib.pyplot as plt
     import numpy as np
 
+    # invalid input
+
+    dummy = []
+    for i in len(spectra):
+        dummy.append(spectra[i].x_type == spectra[0].x_type)
+
+    if not np.all(np.array(dummy)):
+        raise Exception("The X axes of spectra are not of unique type.")
+    
+    dummy = []
+    for i in len(spectra):
+        dummy.append(spectra[i].y_type == spectra[0].y_type)
+
+    if not np.all(np.array(dummy)):
+        raise Exception("The Y axes of spectra are not of unique type.")
+    
+    # and plotting
+
     colors = ["violet", "blue", "green", "yellow", "orange", "red", "brown", "black"]
     for c, spectrum in enumerate(spectra):
         safe_spectrum = spectrum.copy()
         if abs:
             safe_spectrum.Y = np.abs(safe_spectrum.Y)
-        if start == "min":
+        if start == None:
             s = 0
         else:
             s = np.searchsorted(safe_spectrum.X, start)
-        if end == "max":
+        if end == None:
             e = len(safe_spectrum) - 1
         else:
             e = np.searchsorted(safe_spectrum.X, end)
@@ -463,22 +634,19 @@ def compare_plots(spectra, title = "Spectra", legend = None, y_type = "int", x_t
 
     plt.grid()
     plt.title(title)
-    if y_type == "int":
+    if spectra[0].y_type == "int":
         plt.ylabel("Intensity")
-    if y_type == "phase":
+    if spectra[0].y_type == "phase":
         plt.ylabel("Spectral phase [rad]")    
-    if x_type == "wl":
+    if spectra[0].x_type == "wl":
         plt.xlabel("Wavelength [nm]")
-    if x_type == "freq":
+    if spectra[0].x_type == "freq":
         plt.xlabel("Frequency [THz]")
-    if x_type == "time":
+    if spectra[0].x_type == "time":
         plt.xlabel("Time [ps]")
     if isinstance(legend, list):
         plt.legend(legend, bbox_to_anchor = [1, 1])
     plt.show()       
-
-
-
 
 
 
@@ -578,169 +746,6 @@ class ray:
         
         return spectr
 
-
-def cut(spectrum, start, end, how = "units"):
-    '''
-    Returns the \"spectrum\" limited to the borders. 
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Intensity on Y-axis.
-
-    start - start of the segment, to which the spectrum is limited.
-
-    end - end of the segment, to which the spectrum is limited.
-
-    how - defines meaning of \"start\" and \"end\". If \"units\", then those are values on X-axis. 
-    If \"fraction\", then the fraction of length of X-axis. If \"index\", then corresponding indices of border observations.
-    
-    RETURNS:
-
-    Limited spectrum DataFrame.
-
-    '''
-
-    import pandas as pd
-    import numpy as np
-    from math import floor
-
-    if how == "units":
-        s = np.searchsorted(spectrum.values[:, 0], start)
-        e = np.searchsorted(spectrum.values[:, 0], end)
-        cut_spectrum = pd.DataFrame(spectrum.values[s: e, :])
-
-    elif how == "fraction":
-        s = floor(start*spectrum.shape[0])
-        e = floor(end*spectrum.shape[0])
-        cut_spectrum = pd.DataFrame(spectrum.values[s:e, :])
-
-    elif how == "index":
-        cut_spectrum = pd.DataFrame(spectrum.values[start:end, :]) 
-
-    else:
-        raise Exception("Argument not defined.")
-
-    return cut_spectrum
-
-
-def plot(spectrum, color = "darkviolet", title = "Spectrum", x_type = "wl", y_type = "int", what_to_plot = "abs", start = "min", end = "max"):
-    '''
-    Fast spectrum plotting using matplotlib.pyplot library.
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Intensity on Y axis.
-
-    color - color of the plot.
-
-    title - title of the plot.
-
-    x_type - \"wl\" (Wavelength) or \"freq\" (Frequency) or \"time\" (Time). Determines the label of X-axis.
-
-    y_type = \"phase\" (Spectral phase) or \"int\" (Intensity). Determines the label of Y-axis.
-
-    start - starting point (in X-axis units) of a area to be shown on plot. If \"min\", then plot starts with lowest X-value in all spectra.
-
-    end - ending point (in X-axis units) of a area to be shown on plot. If \"max\", then plot ends with highest X-value in all spectra.
-
-    what_to_plot - either \"abs\" or \"imag\" or \"real\".
-
-    RETURNS:
-
-    Continuous plot of the \"spectrum\"/.
-    '''
-
-    import pandas as pd
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from math import floor, log10
-
-    spectrum_safe = spectrum.copy()
-    
-    # simple function to round to significant digits
-
-    def round_to_dig(x, n):
-        return round(x, -int(floor(log10(abs(x)))) + n - 1)
-
-    # invalid arguments
-
-    if x_type not in ("wl", "freq", "time"):
-        raise Exception("Input \"x_type\" not defined.")
-    
-    if y_type not in ("int", "phase"):
-        raise Exception("Input \"y_type\" not defined.")
-    
-    if what_to_plot not in ("abs", "imag", "real"):
-        raise Exception("Input \"what_to_plot\" not defined.")
-
-    # if we dont want to plot whole spectrum
-
-    n_points = len(spectrum_safe.values[:, 0])
-
-    to_cut = False
-    inf = round(np.real(spectrum_safe.values[0, 0].copy()))
-    sup = round(np.real(spectrum_safe.values[-1, 0].copy()))
-
-    s = 0
-    e = -1
-
-    if start != "min":
-        s = np.searchsorted(spectrum_safe.values[:, 0], start)
-        to_cut = True
-
-    if end != "max":        
-        e = np.searchsorted(spectrum_safe.values[:, 0], end)
-        to_cut = True
-
-    spectrum_safe = pd.DataFrame(spectrum_safe.values[s: e, :])   
-
-    values = spectrum_safe.values[:, 1].copy()
-    X = spectrum_safe.values[:, 0].copy()
-    
-    # what do we want to have on Y axis
-
-    if what_to_plot == "abs":
-        values = np.abs(values)
-    if what_to_plot == "real":
-        values = np.real(values)
-    if what_to_plot == "imag":
-        values = np.imag(values)
-
-    # start to plot
-
-    f, ax = plt.subplots()
-    plt.plot(X, values, color = color)
-    plt.grid()
-    if to_cut:
-        plt.title(title + " [only part shown]")
-    else:
-        plt.title(title)
-    if y_type == "phase":
-        plt.ylabel("Spectral phase [rad]")
-    if y_type == "int":
-        plt.ylabel("Intensity")    
-    if x_type == "wl":
-        plt.xlabel("Wavelength [nm]")
-        unit = "nm"
-    if x_type == "freq":
-        plt.xlabel("Frequency [THz]")
-        unit = "THz"
-    if x_type == "time":
-        plt.xlabel("Time [ps]")
-        unit = "ps"
-
-    # quick stats
-    
-    spaces = np.diff(np.real(X))
-    spacing = round_to_dig(np.mean(spaces), 3)
-    p_per_unit = floor(1/np.mean(spaces))
-
-    if to_cut:
-        plt.text(1.05, 0.85, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) + "\nFull X-axis range: {} - {} ".format(inf, sup) + unit , transform = ax.transAxes)
-    else:
-        plt.text(1.05, 0.9, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) , transform = ax.transAxes)
-
-    plt.show()
 
 def shift(spectrum, shift):
     '''
