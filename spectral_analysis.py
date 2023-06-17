@@ -913,7 +913,6 @@ class ray:
 def spider(phase_spectrum, 
            temporal_spectrum, 
            shear, 
-           spectrum_in = "wl",
            intensity_spectrum = None,
            phase_borders = None,
            what_to_return = None,
@@ -929,8 +928,6 @@ def spider(phase_spectrum,
     phase_spectrum - spectrum with interference pattern created in a SPIDER setup. I should be a pandas DataFrame with wavelength or frequency in first column and intensity in the second OR path of .csv file with that data.
 
     shear - spectral shear applied by EOPM given in frequency units (default THz). If \"None\", then shear is estimated using fourier filtering.
-
-    spectrum_in - either "wl" or "freq". Specify units of the first column of loaded spectra.
 
     intensity_spectrum - amplitude of initial not interfered pulse. Similar as "phase_spectrum" it might be either DataFrame of string. If "None", then its approximation derived from SPIDER algorithm is used.  
     
@@ -952,187 +949,190 @@ def spider(phase_spectrum,
 
     # load data - spider
 
-    if isinstance(phase_spectrum, pd.DataFrame):
-        spectrum = phase_spectrum
+    if isinstance(phase_spectrum, spectrum):
+        p_spectrum = phase_spectrum
 
     elif isinstance(phase_spectrum, str):    
-        spectrum = pd.read_csv(phase_spectrum, skiprows = 2)
-
-    spectrum = sa.zero_padding(spectrum, 1)
-
+        spectrum_df = pd.read_csv(phase_spectrum, skiprows = 2)
+        p_spectrum = spectrum(spectrum_df.values[:, 0], spectrum_df.values[:, 1], "wl", "intensity")
+    
     # load data - temporal phase
 
-    if isinstance(temporal_spectrum, pd.DataFrame):
+    if isinstance(temporal_spectrum, spectrum):
         t_spectrum = temporal_spectrum
 
     elif isinstance(temporal_spectrum, str):    
-        t_spectrum = pd.read_csv(temporal_spectrum, skiprows = 2)
+        spectrum_df = pd.read_csv(phase_spectrum, skiprows = 2)
+        t_spectrum = spectrum(spectrum_df.values[:, 0], spectrum_df.values[:, 1], "wl", "intensity")
 
-    t_spectrum = sa.zero_padding(t_spectrum, 1)
+    # zero padding
+
+    t_spectrum.zero_padding(1)
+    p_spectrum.zero_padding(1)
 
     # plot OSA
 
-    min = sa.quantile(spectrum, 0.1)
-    max = sa.quantile(spectrum, 0.9)
-    delta = (max-min)
-    min_wl = min-delta
-    max_wl = max+delta 
+    minimum = p_spectrum.quantile(0.1)
+    maximum = p_spectrum.quantile(0.9)
+    delta = (maximum - minimum)
+    min_wl -= delta
+    max_wl += delta 
 
-    if plot_steps and spectrum_in == "wl":
-        sa.plot(spectrum, "orange", title = "Data from OSA", start = min_wl, end = max_wl, x_type = "wl")
-    if plot_steps and spectrum_in == "freq":
-        sa.plot(spectrum, "orange", title = "Data from OSA", start = min_wl, end = max_wl, x_type = "freq")
+    if plot_steps:
+        sa.plot(p_spectrum, "orange", title = "Data from OSA", start = min_wl, end = max_wl)
 
     # transform X-axis to frequency
 
     # spider
 
-    if spectrum_in == "wl":
-        s_freq = sa.wl_to_freq(spectrum)
-        s_freq = sa.constant_spacing(s_freq)
-        min = sa.quantile(s_freq, 0.1)
-        max = sa.quantile(s_freq, 0.9) 
-        delta = (max-min)
-        min_freq = min-delta
-        max_freq = max+delta
+    if p_spectrum.x_type == "wl":
+        s_freq = p_spectrum.wl_to_freq(inplace = False)
+        s_freq.constant_spacing()
+        min_freq = s_freq.quantile(0.1)
+        max_freq = s_freq.quantile(0.9)
+        delta = (max_freq - min_freq)
+        min_freq -= delta
+        max_freq += delta
         if plot_steps: 
             sa.plot(s_freq,"orange", title = "Wavelength to frequency", x_type = "freq", start = min_freq, end = max_freq)
 
-    elif spectrum_in == "freq":
-        s_freq = spectrum
-        min = sa.quantile(s_freq, 0.1)
-        max = sa.quantile(s_freq, 0.9) 
-        delta = (max-min)
-        min_freq = min-delta
-        max_freq = max+delta
+    elif p_spectrum.x_type == "freq":
+        s_freq = p_spectrum
+        # we need following lines, because we want in every case have min_freq and max_freq defined for later
+        min_freq = s_freq.quantile(0.1)
+        max_freq = s_freq.quantile(0.9)
+        delta = (max_freq - min_freq)
+        min_freq -= delta
+        max_freq += delta
 
     s_freq_for_later = s_freq.copy()
 
     # temporal
 
-    if spectrum_in == "wl":
-        s_freq_t = sa.wl_to_freq(t_spectrum)
-        s_freq_t = sa.constant_spacing(s_freq_t)
+    if t_spectrum.x_type == "wl":
+        s_freq_t = t_spectrum.wl_to_freq(inplace = False)
+        s_freq_t = s_freq_t.constant_spacing
 
-    elif spectrum_in == "freq":
+    elif t_spectrum.x_type == "freq":
         s_freq_t = t_spectrum
 
     # fourier transform
 
-    s_ft = sa.fourier(s_freq, absolute = False)         # spider
-    s_ft_t = sa.fourier(s_freq_t, absolute = False)     # temporal
+    s_ft = s_freq.fourier(inplace = False)         # spider
+    s_ft_t = s_freq_t.fourier(inplace = False)     # temporal
 
     s_shear = s_ft.copy()       # SPOILER: we will use it later to find the shear
     s_shear_t = s_ft_t.copy()
 
-    min = sa.quantile(s_ft, 0.1)
-    max = sa.quantile(s_ft, 0.9)
-    delta = (max-min)/3
-    min_time = min-delta
-    max_time = max+delta
+    min_time = s_ft.quantile(0.1)
+    max_time = s_ft.quantile(0.9)
+    delta = (max_time-min_time)/3
+    min_time -= delta
+    max_time += delta
    
     if plot_steps: 
-        sa.plot(s_ft, title = "Fourier transformed", x_type = "time", start = min_time, end = max_time) 
+        sa.plot(s_ft, title = "Fourier transformed", start = min_time, end = max_time) 
 
     # estimate time delay
     
     if vis_param == None:
-        height = sa.find_visibility(s_freq_t)
+        height = s_freq_t.visibility()
     else:
         height = vis_param
-    period = sa.find_period(s_freq_t, height)[0]
+
+    period = s_freq_t.find_period(height)[0]
     delay = 1/period
 
     # find exact value of time delay
 
     s_ft2 = s_ft.copy()
-    s_ft2 = sa.replace_with_zeros(s_ft2, start = "min", end = delay*0.5)
-    s_ft2 = sa.replace_with_zeros(s_ft2, start = delay*1.5, end = "max")
+    s_ft2.replace_with_zeros(end = delay*0.5)
+    s_ft2.replace_with_zeros(start = delay*1.5)
     
-    idx = s_ft2.values[:, 1].argmax()
+    idx = s_ft2.Y.argmax()
     if isinstance(idx, np.ndarray): 
         idx = idx[0]
-    delay2 = s_ft.values[idx, 0]
+    delay2 = s_ft.X[idx]
     
     # and filter the spectrum to keep only one of site peaks
     
-    s_ft = sa.replace_with_zeros(s_ft, start = "min", end = delay2*0.5)         # spider
-    s_ft = sa.replace_with_zeros(s_ft, start = delay2*1.5, end = "max")
+    s_ft.replace_with_zeros(end = delay2*0.5)           # spider
+    s_ft.replace_with_zeros(s_ft, start = delay2*1.5)
 
-    s_ft_t = sa.replace_with_zeros(s_ft_t, start = "min", end = delay2*0.5)     # temporal
-    s_ft_t = sa.replace_with_zeros(s_ft_t, start = delay2*1.5, end = "max")
+    s_ft_t.replace_with_zeros(end = delay2*0.5)         # temporal
+    s_ft_t.replace_with_zeros(start = delay2*1.5)
 
     if plot_steps: 
-        sa.plot(s_ft, title = "Filtered", x_type = "time", start = -2*delay2, end = 2*delay2)
+        sa.plot(s_ft, title = "Filtered", start = -2*delay2, end = 2*delay2)
 
     # let's find the shear
     
     if shear == None:
 
-        s_shear = sa.replace_with_zeros(s_shear, start = "min", end = -delay2*0.5)          # spider
-        s_shear = sa.replace_with_zeros(s_shear, start = delay2*0.5, end = "max")
+        s_shear.replace_with_zeros(start = None, end = -delay2*0.5)          # spider
+        s_shear.replace_with_zeros(start = delay2*0.5, end = None)
 
-        s_shear_t = sa.replace_with_zeros(s_shear_t, start = "min", end = -delay2*0.5)      # temporal
-        s_shear_t = sa.replace_with_zeros(s_shear_t, start = delay2*0.5, end = "max")
+        s_shear_t.replace_with_zeros(start = None, end = -delay2*0.5)      # temporal
+        s_shear_t.replace_with_zeros(start = delay2*0.5, end = None)
         
-        s_shear = sa.inv_fourier(s_shear)
-        s_shear_t = sa.inv_fourier(s_shear_t)
+        s_shear.inv_fourier()
+        s_shear_t.inv_fourier()
 
-        X_shear = np.real(s_shear.values[:, 0])
-        Y_shear = np.abs(s_shear.values[:, 1])
-        Y_shear_t = np.abs(s_shear_t.values[:, 1])
+        X_shear = np.real(s_shear.X)
+        Y_shear = np.abs(s_shear.Y)
+        Y_shear_t = np.abs(s_shear_t.Y)
 
         Y_shear_t /= 2
         Y_shear -= Y_shear_t
 
-        Y_shear = pd.DataFrame(np.transpose(np.stack((X_shear, Y_shear))))
-        Y_shear_t = pd.DataFrame(np.transpose(np.stack((X_shear, Y_shear_t))))
+        s_shear = spectrum(X_shear, Y_shear, s_shear.x_type, s_shear.y_type)
+        s_shear_t = spectrum(X_shear, Y_shear_t, s_shear.x_type, s_shear.y_type)
 
-        Y_shear = sa.replace_with_zeros(Y_shear, start = "min", end = -0.5)
-        Y_shear = sa.replace_with_zeros(Y_shear, start = 0.5, end = "max")
+        s_shear.replace_with_zeros(start = None, end = -0.5) # TODO: maybe automatize values of end and start?
+        s_shear.replace_with_zeros(start = 0.5, end = None)
 
-        Y_shear_t = sa.replace_with_zeros(Y_shear_t, start = "min", end = -0.5)
-        Y_shear_t = sa.replace_with_zeros(Y_shear_t, start = 0.5, end = "max")
+        s_shear_t.replace_with_zeros(start = None, end = -0.5)
+        s_shear_t.replace_with_zeros(start = 0.5, end = None)
         
-        shear = sa.find_shift(Y_shear, Y_shear_t, spectrum_in = "freq")
+        shear = sa.find_shift(s_shear, s_shear_t)
         if True:
-            sa.compare_plots([Y_shear, Y_shear_t], 
+            sa.compare_plots([s_shear, s_shear_t], 
                              start = -0.6, 
                              end = 0.6, 
                              abs = True, 
                              title = "Shear of {} THz".format(round(shear,5)),
                              legend = ["Sheared", "Not sheared"])
 
-    integrate_interval = flr(shear/(np.mean(np.diff(s_freq_for_later.values[:, 0]))))
-    mean = np.mean(s_freq_for_later.values[:, 0])
+    integrate_interval = flr(shear/(s_freq_for_later.spacing))
+    mean = np.mean(s_freq_for_later.X)
         
     # inverse fourier
 
-    s_ift = sa.inv_fourier(s_ft)        # spider
-    s_ift_t = sa.inv_fourier(s_ft_t)    # temporal
+    s_ift = s_ft.inv_fourier(inplace = False)        # spider
+    s_ift_t = s_ft_t.inv_fourier(inplace = False)    # temporal
     if plot_steps:
         s_ift2 = s_ift.copy()
-        s_ift2.values[:, 0] += mean 
+        s_ift2.X += mean 
         sa.plot(s_ift2, title = "Inverse Fourier transformed", x_type = "freq", start = min_freq, end = max_freq, what_to_plot = "abs")
 
     # cut spectrum to area of significant phase
 
     if phase_borders == None:
-        min_phase = sa.quantile(s_ift, 0.05)
-        max_phase = sa.quantile(s_ift, 0.95)
+        min_phase = s_ift.quantile(0.05)
+        max_phase = s_ift.quantile(0.95)
 
     else:
         min_phase = phase_borders[0] - mean
         max_phase = phase_borders[1] - mean
 
-    s_cut = sa.cut(s_ift, start = min_phase, end = max_phase)
-    s_cut_t = sa.cut(s_ift_t, start = min_phase, end = max_phase)
+    s_cut = s_ift.cut(start = min_phase, end = max_phase, inplace = False)
+    s_cut_t = s_ift_t.cut(start = min_phase, end = max_phase, inplace = False)
 
     # extract phase differences
 
-    phase_values = s_cut.values[:, 1].copy()
-    temporal_phase = s_cut_t.values[:, 1].copy()
-    X = s_cut.values[:, 0].copy()
+    phase_values = s_cut.Y.copy()
+    temporal_phase = s_cut_t.Y.copy()
+    X = s_cut.X.copy()
 
     phase_values = np.angle(phase_values)
     temporal_phase = np.angle(temporal_phase)
@@ -1160,26 +1160,30 @@ def spider(phase_spectrum,
         plt.grid()
         plt.show()
 
-    # and plot phase
+    # firstly initial interpolation to estimate vertical translation to be made
 
     X = X[::integrate_interval]
     values = values[::integrate_interval]
 
     Y = np.cumsum(values)
 
-    phase_frame_old = pd.DataFrame(np.transpose(np.stack((X, Y))))
-    interpolated_phase_old = sa.interpolate(phase_frame_old, X2)
+    phase_spectrum_old = spectrum(X, Y, "freq", "phase")
+    interpolated_phase_old = sa.interpolate(phase_spectrum_old, X2)
 
-    Y2 = interpolated_phase_old.values[:, 1]
+    Y2 = interpolated_phase_old.Y
     Y -= Y2[flr(len(Y2)/2)]
 
-    phase_frame = pd.DataFrame(np.transpose(np.stack((X, Y))))
-    interpolated_phase = sa.interpolate(phase_frame, X2)
+    # now proper interpolation
+
+    phase_frame = spectrum(X, Y, "freq", "phase")
+    interpolated_phase = sa.interpolate(phase_spectrum, X2)
+
+    #plot phase
 
     if plot_phase:
 
         plt.scatter(X, Y, color = "orange", s = 20)
-        plt.plot(interpolated_phase.values[:,0], interpolated_phase.values[:,1], color = "green")
+        plt.plot(interpolated_phase.X, interpolated_phase.Y, color = "green")
         plt.title("Spectral phase of original pulse")
         plt.legend(["Phase reconstructed from SPIDER", "Interpolated phase"], bbox_to_anchor = [1, 1])
         plt.xlabel("Frequency [THz]")
@@ -1191,33 +1195,37 @@ def spider(phase_spectrum,
 
     if intensity_spectrum == None:
         intensity = s_cut.copy()
-        s_cut.values[:,:] = np.abs(s_cut.values[:,:])
+        s_cut.X = np.abs(s_cut.X)
+        s_cut.Y = np.abs(s_cut.Y)
     
     else:
-        if isinstance(intensity_spectrum, pd.DataFrame):
+        if isinstance(intensity_spectrum, spectrum):
             intensity = intensity_spectrum
         elif isinstance(intensity_spectrum, str):
-            intensity = pd.read_csv(intensity_spectrum, skiprows = 2)
-        if spectrum_in == "wl":
-            intensity = sa.wl_to_freq(intensity)
-            intensity = sa.constant_spacing(intensity)
-        start = np.searchsorted(intensity.values[:, 0], interpolated_phase.values[0, 0])
-        num = len(interpolated_phase.values[:, 0])
+            intensity_df = pd.read_csv(intensity_spectrum, skiprows = 2)
+            intensity = spectrum(intensity_df.X, intensity_df.Y, "wl", "intensity")
+
+        if intensity.x_type == "wl":
+            intensity.wl_to_freq()
+            intensity.constant_spacing()
+
+        start = np.searchsorted(intensity.X, interpolated_phase.X[0])
+        num = len(interpolated_phase)
         end = start + num
-        intensity = sa.cut(intensity, start = start, end = end, how = "index")
+        intensity.cut(start = start, end = end, how = "index")
 
     # extract the pulse
 
-    interpolated_phase2 = sa.zero_padding(interpolated_phase, 2)  
-    intensity = sa.zero_padding(intensity, 2) 
+    interpolated_phase2 = interpolated_phase.zero_padding(2, inplace = False)  
+    intensity.zero_padding(2) 
 
     pulse = sa.recover_pulse(interpolated_phase2, intensity)
 
     if plot_pulse:
         min_pulse = sa.quantile(pulse, 0.25)
         max_pulse = sa.quantile(pulse, 0.75)
-        delta = (max_pulse-min_pulse)*3
-        sa.plot(pulse, color = "red", title = "Recovered pulse", x_type = "time", start = min_pulse-delta, end = max_pulse+delta, what_to_plot = "abs")
+        delta = (max_pulse - min_pulse)*3
+        sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "abs")
 
     # return what's needed
 
