@@ -9,6 +9,10 @@ import matplotlib.pyplot as plt
 
 
 class spectrum:
+    '''
+    Class of an optical spectrum. It stores values of the \"X\" axis (wavelength, frequency or time) and the \"Y\" axis
+    (intensity or phase) as 1D numpy arrays. Several standard transforms and basic statistics are implemented as class methods.
+    '''
 
     def __init__(self, X, Y, x_type, y_type):
 
@@ -124,7 +128,6 @@ class spectrum:
         If \"fraction\", then the fraction of length of X-axis. If \"index\", then corresponding indices of border observations.
         '''
 
-        import pandas as pd
         import numpy as np
         from math import floor
 
@@ -193,6 +196,9 @@ class spectrum:
         '''
 
         from scipy.fft import ifft, fftfreq, ifftshift, fftshift
+
+        if self.x_type != "time":
+            raise Exception("Sticking to the convention: use Fourier Transform (not Inverse).")
 
         # prepare input
 
@@ -264,11 +270,12 @@ class spectrum:
         return np.mean(diff_cut), np.std(diff_cut)
     
 
-    def visibility(self):
+    def visibility(self):   # TODO the functions returns height where greatest number of fringes is seen, meanwhile we want a plateau
         '''
         BE AWARE: not classical concept of visibility is applied. 
         
-        Function returns float in range (0, 1) which is the fraction of maximum intensity, at which the greatest number of fringes is observable.
+        Function returns float in range (0, 1) which is the fraction of maximum intensity, 
+        at which the greatest number of fringes is observable.
         '''
 
         import numpy as np
@@ -298,6 +305,104 @@ class spectrum:
 
         return level/max
     
+
+    def replace_with_zeros(self, start = None, end = None, inplace = True):
+        '''
+        Replace numbers on Y axis from "start" to "end" with zeroes. "start" and "end" are in X axis' units. 
+        If \"start\" and \"end\" are \"None\", then beginning and ending of whole spectrum are used as the borders.
+        '''
+
+        import numpy as np
+
+        if start == None:
+            s = 0
+        else:
+            s = np.searchsorted(self.X, start)
+
+        if end == None:
+            e = self.__len__() - 1
+        else:
+            e = np.searchsorted(self.X, end)
+
+        new_Y = self.Y.copy()
+        new_Y[s:e] = np.zeros(e-s)
+
+        if inplace == True:
+            self.Y = new_Y
+        if inplace == False:
+            return spectrum(self.X, new_Y, self.x_type, self.y_type)
+    
+
+    def smart_shift(self, shift = None, inplace = True):
+        '''
+        Shift spectrum by rolling Y-axis. Value of shift is to be given in X axis units. If shift = \"None\",
+        the spectrum is shifted so, that 1/2-order quantile for Y axis is reached for x = 0.
+        '''
+
+        import numpy as np
+        import pandas as pd
+        from math import floor
+        import spectral_analysis as sa
+
+        shift2 = shift
+
+        if shift == None:
+            shift2 = -self.quantile(1/2)
+
+        index_shift = floor(np.real(shift2)/np.real(self.spacing))
+
+        Y_new = self.Y.copy()
+        Y_new = np.roll(Y_new, index_shift)
+            
+        if inplace == True:
+            self.Y = Y_new
+        if inplace == False:
+            return spectrum(self.X, Y_new, self.x_type, self.y_type)
+        
+
+    def shift(self, shift, inplace = True):
+        '''
+        Shifts the spectrum by X axis. Warning: only values on X axis are modified.
+        '''
+        import numpy as np
+        from math import floor
+
+        new_X = self.X.copy()
+        new_X = new_X + shift
+
+        if inplace == True:
+            self.X = new_X
+        if inplace == False:
+            return spectrum(new_X, self.Y, self.x_type, self.y_type)
+
+
+    def zero_padding(self, how_much, inplace = True):
+        '''
+        Add zeros on Y-axis to the left and right of data with constant (mean) spacing on X-axis. 
+        \"how_much\" specifies number of added zeroes on left and right side of spectrum as a fraction of spectrums length.
+        '''
+        import numpy as np
+        from math import floor
+
+        length = floor(how_much*self.__len__())
+        
+        left_start = self.x[0] - self.spacing*length
+        left_X = np.linspace(left_start, self.X[0], endpoint = False, num = length - 1)
+        left_Y = np.zeros(length - 1)
+
+        right_end = self.X[-1] + self.spacing*length
+        right_X = np.linspace(self.X[-1] + self.spacing, right_end, endpoint = True, num = length - 1)
+        right_Y = np.zeros(length-1)
+
+        new_X = np.concatenate([left_X, self.X.copy(), right_X])
+        new_Y = np.concatenate([left_Y, self.Y.copy(), right_Y])
+
+        if inplace == True:
+            self.X = new_X
+            self.Y = new_Y
+        if inplace == False:
+            return spectrum(new_X, new_Y, self.x_type, self.y_type)
+
 
     def quantile(self, q):
         '''
@@ -385,8 +490,8 @@ class spectrum:
 
     def remove_offset(self, period, inplace = True):
         '''
-        The function improves visibility of interference fringes by subtracting moving minimum i. e. minimum of a segment of length \"period\",
-        centered at given point.
+        The function improves visibility of interference fringes by subtracting moving minimum i. e. 
+        minimum of a segment of length \"period\", centered at given point.
         '''
 
         import numpy as np
@@ -410,7 +515,8 @@ class spectrum:
 
     def moving_average(self, period, inplace = True):
         '''
-        Smooth spectrum by taking moving average with \"period\" in X axis units. On the beginning and ending of spectrum shorter segments are used.
+        Smooth spectrum by taking moving average with \"period\" in X axis units.
+        On the beginning and ending of spectrum shorter segments are used.
         '''
 
         from math import floor as flr
@@ -479,19 +585,11 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
 
     title - title of the plot.
 
-    x_type - \"wl\" (Wavelength) or \"freq\" (Frequency) or \"time\" (Time). Determines the label of X-axis.
-
-    y_type = \"phase\" (Spectral phase) or \"int\" (Intensity). Determines the label of Y-axis.
-
     start - starting point (in X-axis units) of a area to be shown on plot. If \"min\", then plot starts with lowest X-value in all spectra.
 
     end - ending point (in X-axis units) of a area to be shown on plot. If \"max\", then plot ends with highest X-value in all spectra.
 
     what_to_plot - either \"abs\" or \"imag\" or \"real\".
-
-    RETURNS:
-
-    Continuous plot of the \"spectrum\"/.
     '''
 
     import numpy as np
@@ -649,6 +747,66 @@ def compare_plots(spectra, title = "Spectra", legend = None, start = None, end =
     plt.show()       
 
 
+def recover_pulse(phase_spectrum, intensity_spectrum):
+    '''
+    Reconstructs the pulse (or any type of spectrum in time), given spectrum with spectral phase and spectrum with spectral intensity.
+    '''
+
+    import numpy as np
+
+    if len(phase_spectrum) != len(intensity_spectrum):
+        raise Exception("Frequency axes of phase and intensity are not of equal length.")
+    
+    complex_Y = intensity_spectrum.Y.copy()
+    complex_Y = complex_Y.astype(complex) # surprisingly that line is necessary
+    for i in range(len(complex_Y)):
+        complex_Y[i] *= np.exp(1j*phase_spectrum.Y)
+
+    pulse_spectrum = spectrum(phase_spectrum.X.copy(), complex_Y, "time", "intensity")
+    return pulse_spectrum.fourier(inplace = False)
+
+
+def find_shift(spectrum_1, spectrum_2):
+    '''
+    Returns translation between two spectra in THz. Spectra in wavelength domain are at first transformed into frequency domain.
+    Least squares is loss function to be minimized. Shift is found by brute force: 
+    checking number of shifts equal to number of points on X axis.
+    '''
+
+    import numpy as np
+
+    spectrum1 = spectrum_1.copy()
+    spectrum2 = spectrum_2.copy()
+
+    if len(spectrum1) != len(spectrum2):
+        raise Exception("Spectra are of different length.")
+
+    if spectrum1.x_type == "wl":
+
+        spectrum1.wl_to_freq()
+        spectrum1.constant_spacing()
+
+    if spectrum2.x_type == "wl":
+
+        spectrum2.wl_to_freq()
+        spectrum2.constant_spacing()
+
+    def error(v_1, v_2):
+        return np.sum(np.abs(v_1 - v_2)**2)
+    
+    minimum = np.sum(np.abs(spectrum1.Y)**2)
+    idx = 0
+    for i in range(len(spectrum1)):
+         if minimum > error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i)):
+             minimum = error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i))
+             idx = i
+
+    if idx > len(spectrum1.Y)/2:
+        idx = len(spectrum1.Y) - idx
+    
+    return spectrum1.spacing*idx
+
+
 
 #                   ---------
 #                   RAY CLASS
@@ -697,7 +855,6 @@ class ray:
 
 
     def chirp(self, polarization, fiber_length):
-
         import spectral_analysis as sa
 
         if polarization not in ["ver", "hor"]:
@@ -716,7 +873,6 @@ class ray:
 
 
     def shear(self, shift, polarization):
-
         import spectral_analysis as sa
 
         if polarization not in ["ver", "hor"]:
@@ -726,6 +882,7 @@ class ray:
             self.hor = sa.smart_shift(self.hor, shift)
         if polarization == "ver":
             self.ver = sa.smart_shift(self.ver, shift)
+
 
     def polarizer(self, transmission_polar):
 
@@ -737,7 +894,6 @@ class ray:
             self.ver.Y *= 0
 
     def OSA(self, start = "min", end = "max"):
-
         import spectral_analysis as sa
 
         Y = self.hor.Y*np.conjugate(self.hor.Y) + self.ver.Y*np.conjugate(self.ver.Y)
@@ -747,214 +903,11 @@ class ray:
         return spectr
 
 
-def shift(spectrum, shift):
-    '''
-    Shifts the spectrum by X axis. Warning: only values on X axis are modified.
-
-    ARGUMENTS:
-
-    spectrum - DataFrame with Intensity on Y axis.
-    
-    shift - size of a shift in X axis units.
-
-    RETURNS:
-
-    Shifted spectrum DataFrame.
-    '''
-    import pandas as pd
-    import numpy as np
-
-    data = spectrum.values
-    new_data = data.copy()
-    new_data[:, 0] = new_data[:, 0] + shift
-
-    return pd.DataFrame(new_data)
-
-
-
-def zero_padding(spectrum, how_much):
-    '''
-    Add zeros on Y-axis to the left and right of data with constant (mean) spacing on X-axis.
-    
-    ARGUMENTS:
-
-    spectrum - DataFrame with Intensity on Y axis.
-
-    how_much - number of added zeroes on left and right side of spectrum as a fraction of spectrums length.
-
-    RETURNS:
-    
-    DataFrame spectrum with padded zeroes.
-    '''
-    import pandas as pd
-    import numpy as np
-    from math import floor
-
-    length = floor(how_much*spectrum.shape[0])
-    spacing = np.mean(np.diff(spectrum.values[:, 0]))
-    
-    left_start = spectrum.values[0, 0] - spacing*length
-    left = np.linspace(left_start, spectrum.values[0, 0], endpoint = False, num = length - 1)
-    left_arr = np.transpose(np.stack((left, np.zeros(length-1))))
-
-    right_end = spectrum.values[-1, 0] + spacing*length
-    right = np.linspace(spectrum.values[-1, 0] + spacing, right_end, endpoint = True, num = length - 1)
-    right_arr = np.transpose(np.stack((right, np.zeros(length-1))))
-
-    arr_with_zeros = np.concatenate([left_arr, spectrum.values, right_arr])
-
-    return pd.DataFrame(arr_with_zeros)
-
-
-
-def replace_with_zeros(spectrum, start, end):
-    '''
-    Replace numbers on Y-axis of "spectrum" from "start" to "end" with zeroes. "start" and "end" are in X-axis' units.
-    '''
-
-    import numpy as np
-    import pandas as pd
-
-    data = spectrum.values.copy()
-    if start == "min":
-        s = 0
-    else:
-        s = np.searchsorted(spectrum.values[:, 0], start)
-
-    if end == "max":
-        e = spectrum.shape[0]
-    else:
-        e = np.searchsorted(spectrum.values[:, 0], end)
-
-    data[s: e, 1] = np.zeros(e-s)
-
-    return pd.DataFrame(data)
-
-
-def smart_shift(spectrum, shift = "center"):
-    '''
-    Shift spectrum by rolling Y-axis.
-     
-    ARGUMENTS:
-
-    spectrum - standard pd.DataFrame spectrum.
-
-    shift - either value of shift in X axis units or \"center\". In the latter case the spectrum is shifted so, that 1/2-order quantile for Y axis is reached for x = 0.
-    
-    RETURNS:
-
-    shifted_spectrum - standard pd.DataFrame spectrum.    
-    '''
-
-    import numpy as np
-    import pandas as pd
-    from math import floor
-    import spectral_analysis as sa
-
-    data = spectrum.values.copy()
-    shift2 = shift
-    
-    if isinstance(shift, int):
-        pass
-    if shift == "center":
-        shift2 = -sa.quantile(spectrum, 1/2)
-
-    spacing = np.mean(np.diff(data[:, 0]))
-    index_shift = floor(np.real(shift2)/np.real(spacing))
-
-    data[:, 1] = np.roll(data[:, 1], index_shift)
-        
-    return pd.DataFrame(data)
-
-
-def find_shift(spectrum1, spectrum2, spectrum_in = "wl"):
-    '''
-    Returns translation between two spectra in THz or nm. Least squares is loss function to be minimized. Shift is found by brute force: checking number of shifts equal to number of points on X axis.
-
-    ARGUMENTS:
-
-    spectrum1 - first spectrum in standard pd.DataFrame format.
-    
-    spectrum1 - second spectrum in standard pd.DataFrame format.
-
-    spectrum_in - specify X-axis units. Either "wl" or "THz".
-
-    RETURNS:
-
-    shift - scalar value of shift, which unit is determined by \"spectrum_in\".
-
-    '''
-    import pandas as pd
-    import numpy as np
-    import spectral_analysis as sa
-
-    if spectrum_in not in ["wl", "freq"]:
-        raise Exception("spectrum_in must be either \"wl\" or \"freq\".")
-
-    if spectrum_in == "wl":
-
-        spectrum1 = sa.wl_to_freq(spectrum1)
-        spectrum2 = sa.wl_to_freq(spectrum2)
-        spectrum1 = sa.constant_spacing(spectrum1)
-        spectrum2 = sa.constant_spacing(spectrum2)
-
-    spacing = np.mean(np.diff(spectrum1.values[:, 0]))
-
-    values1 = spectrum1.values[:, 1]
-    values2 = spectrum2.values[:, 1]
-
-    def error(v_1, v_2):
-        return np.sum(np.abs(v_1-v_2)**2)
-    
-    min = np.sum(np.abs(values1)**2)
-    idx = 0
-    for i in range(len(values1)):
-         if min > error(values1, np.roll(a = values2, shift = i)):
-             min = error(values1, np.roll(a = values2, shift = i))
-             idx = i
-
-    if idx > len(values1)/2:
-        idx = len(values1) - idx
-    
-    return spacing*idx
-
-
-
-def recover_pulse(phase_df, intensity_df):
-    '''
-    Reconstructs the pulse (or any type of spectrum), given DataFrame of spectral phase and DataFrame of spectral intensity.
-
-    ARGUMENTS:
-    
-    phase_df - pd.DataFrame with values of spectral phase in second column.
-    
-    intensity_df - pd.DataFrame with values of spectral intensity in second column.
-    
-    RETURNS:
-
-    pulse_df - pd.DataFrame with reconstructed pulse spectrum. 
-    '''
-
-    import numpy as np
-    import pandas as pd
-    import spectral_analysis as sa
-
-    if len(phase_df.values[:, 0]) != len(intensity_df.values[:, 0]):
-        raise Exception("Frequency axes of phase and intensity are not equal.")
-    
-    X = phase_df.values[:, 0]
-    complex_Y = intensity_df.values[:, 1].copy()
-    complex_Y = complex_Y.astype(complex) # surprisingly that line is necessary
-    for i in range(len(complex_Y)):
-        complex_Y[i] *= np.exp(1j*phase_df.values[i, 1])
-
-    spectrum = pd.DataFrame(np.transpose(np.stack((X, complex_Y))))
-    return sa.fourier(spectrum)
-
 
 #                   ----------------
 #                   SPIDER ALGORITHM
 #                   ----------------
+
 
 
 def spider(phase_spectrum, 
