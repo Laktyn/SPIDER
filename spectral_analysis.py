@@ -74,8 +74,8 @@ class spectrum:
 
         length = self.__len__()
 
-        freq = spectrum.X.copy()
-        intens = spectrum.Y.copy()
+        freq = self.X.copy()
+        intens = self.Y.copy()
         new_freq = np.linspace(start = freq[0], stop = freq[-1], num = length, endpoint = True)
         new_intens = []
 
@@ -102,9 +102,6 @@ class spectrum:
                     j += 1 # j is chosen in such a way, because for every new "freq" it will be greater than previous
 
             new_intens.append(interpolated_int)
-
-        data = [[new_freq[i], new_intens[i]] for i in range(length)]
-        df_spectrum = pd.DataFrame(data)
 
         if inplace == True:
             self.X = new_freq
@@ -179,7 +176,7 @@ class spectrum:
         FT_intens = fft(self.Y, norm = "ortho")
         FT_intens = fftshift(FT_intens)
 
-        time = fftfreq(self.__len__(), self.spacing())
+        time = fftfreq(self.__len__(), self.spacing)
         time = fftshift(time)
 
         if inplace:
@@ -386,7 +383,7 @@ class spectrum:
 
         length = floor(how_much*self.__len__())
         
-        left_start = self.x[0] - self.spacing*length
+        left_start = self.X[0] - self.spacing*length
         left_X = np.linspace(left_start, self.X[0], endpoint = False, num = length - 1)
         left_Y = np.zeros(length - 1)
 
@@ -413,7 +410,7 @@ class spectrum:
         sum = 0
         all = np.sum(np.abs(self.Y))
         for i in range(self.__len__()):
-            sum += np.abs(self.Y)
+            sum += np.abs(self.Y[i])
             if sum >= all*q:
                 x = self.X[i]
                 break
@@ -547,8 +544,8 @@ class spectrum:
 
 def interpolate(old_spectrum, new_X):
     '''
-    Interpolate rarely sampled spectrum for values in new X-axis. Interpolation is performed with cubic functions. If y-values to be interpolated are complex, 
-    their absolute value is used.
+    Interpolate rarely sampled spectrum for values in new X-axis. Interpolation is performed with cubic functions. 
+    If y-values to be interpolated are complex, they are casted to reals.
 
     ARGUMENTS:
 
@@ -564,8 +561,8 @@ def interpolate(old_spectrum, new_X):
     import numpy as np
     from scipy.interpolate import CubicSpline
 
-    X = np.real(old_spectrum.X)
-    Y = np.abs(old_spectrum.Y)
+    X = np.real(old_spectrum.X.copy())
+    Y = np.real(old_spectrum.Y.copy())
 
     model = CubicSpline(X, Y)
     new_Y = model(np.real(new_X))
@@ -699,14 +696,14 @@ def compare_plots(spectra, title = "Spectra", legend = None, start = None, end =
     # invalid input
 
     dummy = []
-    for i in len(spectra):
+    for i in range(len(spectra)):
         dummy.append(spectra[i].x_type == spectra[0].x_type)
 
     if not np.all(np.array(dummy)):
         raise Exception("The X axes of spectra are not of unique type.")
     
     dummy = []
-    for i in len(spectra):
+    for i in range(len(spectra)):
         dummy.append(spectra[i].y_type == spectra[0].y_type)
 
     if not np.all(np.array(dummy)):
@@ -760,9 +757,9 @@ def recover_pulse(phase_spectrum, intensity_spectrum):
     complex_Y = intensity_spectrum.Y.copy()
     complex_Y = complex_Y.astype(complex) # surprisingly that line is necessary
     for i in range(len(complex_Y)):
-        complex_Y[i] *= np.exp(1j*phase_spectrum.Y)
+        complex_Y[i] *= np.exp(1j*phase_spectrum.Y[i])
 
-    pulse_spectrum = spectrum(phase_spectrum.X.copy(), complex_Y, "time", "intensity")
+    pulse_spectrum = spectrum(phase_spectrum.X.copy(), complex_Y, "freq", "intensity")
     return pulse_spectrum.fourier(inplace = False)
 
 
@@ -912,14 +909,16 @@ class ray:
 
 def spider(phase_spectrum, 
            temporal_spectrum, 
-           shear, 
+           shear = None, 
            intensity_spectrum = None,
            phase_borders = None,
            what_to_return = None,
            vis_param = None,
-           plot_steps = True, 
-           plot_phase = True, 
-           plot_pulse = True):
+           smoothing_period = None,
+           plot_steps = False, 
+           plot_phase = True,
+           plot_shear = False, 
+           plot_pulse = False):
     '''
     Performs SPIDER algorithm.
 
@@ -950,7 +949,7 @@ def spider(phase_spectrum,
     # load data - spider
 
     if isinstance(phase_spectrum, spectrum):
-        p_spectrum = phase_spectrum
+        p_spectrum = phase_spectrum.copy()
 
     elif isinstance(phase_spectrum, str):    
         spectrum_df = pd.read_csv(phase_spectrum, skiprows = 2)
@@ -959,10 +958,10 @@ def spider(phase_spectrum,
     # load data - temporal phase
 
     if isinstance(temporal_spectrum, spectrum):
-        t_spectrum = temporal_spectrum
+        t_spectrum = temporal_spectrum.copy()
 
     elif isinstance(temporal_spectrum, str):    
-        spectrum_df = pd.read_csv(phase_spectrum, skiprows = 2)
+        spectrum_df = pd.read_csv(temporal_spectrum, skiprows = 2)
         t_spectrum = spectrum(spectrum_df.values[:, 0], spectrum_df.values[:, 1], "wl", "intensity")
 
     # zero padding
@@ -972,9 +971,9 @@ def spider(phase_spectrum,
 
     # plot OSA
 
-    minimum = p_spectrum.quantile(0.1)
-    maximum = p_spectrum.quantile(0.9)
-    delta = (maximum - minimum)
+    min_wl = p_spectrum.quantile(0.1)
+    max_wl = p_spectrum.quantile(0.9)
+    delta = (max_wl - min_wl)
     min_wl -= delta
     max_wl += delta 
 
@@ -1011,7 +1010,7 @@ def spider(phase_spectrum,
 
     if t_spectrum.x_type == "wl":
         s_freq_t = t_spectrum.wl_to_freq(inplace = False)
-        s_freq_t = s_freq_t.constant_spacing
+        s_freq_t.constant_spacing()
 
     elif t_spectrum.x_type == "freq":
         s_freq_t = t_spectrum
@@ -1057,7 +1056,7 @@ def spider(phase_spectrum,
     # and filter the spectrum to keep only one of site peaks
     
     s_ft.replace_with_zeros(end = delay2*0.5)           # spider
-    s_ft.replace_with_zeros(s_ft, start = delay2*1.5)
+    s_ft.replace_with_zeros(start = delay2*1.5)
 
     s_ft_t.replace_with_zeros(end = delay2*0.5)         # temporal
     s_ft_t.replace_with_zeros(start = delay2*1.5)
@@ -1074,11 +1073,12 @@ def spider(phase_spectrum,
 
         s_shear_t.replace_with_zeros(start = None, end = -delay2*0.5)      # temporal
         s_shear_t.replace_with_zeros(start = delay2*0.5, end = None)
-        
+
         s_shear.inv_fourier()
         s_shear_t.inv_fourier()
 
         X_shear = np.real(s_shear.X)
+        X_shear_t = np.real(s_shear_t.X)
         Y_shear = np.abs(s_shear.Y)
         Y_shear_t = np.abs(s_shear_t.Y)
 
@@ -1095,7 +1095,8 @@ def spider(phase_spectrum,
         s_shear_t.replace_with_zeros(start = 0.5, end = None)
         
         shear = sa.find_shift(s_shear, s_shear_t)
-        if True:
+        
+        if plot_shear:
             sa.compare_plots([s_shear, s_shear_t], 
                              start = -0.6, 
                              end = 0.6, 
@@ -1142,6 +1143,12 @@ def spider(phase_spectrum,
     values = phase_values - temporal_phase
     values -= values[0]                     # deletes linear aberration in phase
     values = np.unwrap(values)
+
+    if smoothing_period != None:
+        V = sa.spectrum(X, values, "freq", "phase")
+        V.moving_average(smoothing_period)
+        values = V.Y
+
     values -= values[flr(len(values)/2)]    # without that line, spectral phase will later always start at zero and grow
 
     # prepare data to plot
@@ -1169,16 +1176,15 @@ def spider(phase_spectrum,
 
     phase_spectrum_old = spectrum(X, Y, "freq", "phase")
     interpolated_phase_old = sa.interpolate(phase_spectrum_old, X2)
-
     Y2 = interpolated_phase_old.Y
     Y -= Y2[flr(len(Y2)/2)]
 
     # now proper interpolation
 
-    phase_frame = spectrum(X, Y, "freq", "phase")
+    phase_spectrum = spectrum(X, Y, "freq", "phase")
     interpolated_phase = sa.interpolate(phase_spectrum, X2)
 
-    #plot phase
+    # plot phase
 
     if plot_phase:
 
@@ -1232,4 +1238,4 @@ def spider(phase_spectrum,
     if what_to_return == "pulse":
         return pulse
     elif what_to_return == "phase":
-        return phase_frame, interpolated_phase
+        return phase_spectrum, interpolated_phase
