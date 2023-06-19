@@ -968,23 +968,30 @@ def measurement(centre = 1550, span = 10):
     return osa_spectrum
 
 
-def OSA(centre = 1550, span = 10):
+def OSA(centre = 1550, span = 10, plot_size = [10, 10]):
     '''
-    Plots continuous in time spectrum from OSA.
+    Plots continuous in time spectrum from OSA. \"plot_size\" is tuple of dimensions of image to be shown in cm
     '''
     import matplotlib.pyplot as plt
     import spectral_analysis as sa
+    from IPython.display import display, clear_output
+    import time
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(fig_size = [plot_size[0]/2.54, plot_size[1]/2.54])
 
+    start_time = time.time()
     while True:
+        current_time = time.time()
+        if current_time - start_time > 1800:
+            raise RuntimeWarning("Measurement lasted longer than 0.5h.")
         pure_spectrum = sa.measurement(centre = centre, span = span)
         ax.clear()
         ax.plot(pure_spectrum.X, pure_spectrum.Y, color = "red")
         ax.set_title("OSA")
         ax.set_xlabel("Wavelength [nm]")
         ax.set_ylabel("Intensity")
-    plt.show()
+        display(fig)
+        clear_output(wait=True)
 
 
 
