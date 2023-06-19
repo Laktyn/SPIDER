@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
+
 #                   --------------
 #                   SPECTRUM CLASS
 #                   --------------
@@ -27,7 +28,7 @@ class spectrum:
         self.Y = Y
         self.x_type = x_type
         self.y_type = y_type
-        self.spacing = np.mean(np.diff(self.X))
+        self.spacing = np.mean(np.diff(np.real(self.X)))
 
 
     def __len__(self):
@@ -542,6 +543,15 @@ class spectrum:
 
 
 
+def load_csv(filename, x_type = "wl", y_type = "intensity"):
+    '''
+    Load CSV file to a spectrum class. Spectrum has on default wavelengths on X axis and intensity on Y axis.
+    '''
+    import pandas as pd
+    spectr = pd.read_csv(filename, skiprows = 2)
+    return spectrum(spectr.values[:, 0], spectr.values[:, 1], x_type = x_type, y_type = y_type)
+
+
 def interpolate(old_spectrum, new_X):
     '''
     Interpolate rarely sampled spectrum for values in new X-axis. Interpolation is performed with cubic functions. 
@@ -863,7 +873,7 @@ class ray:
         c = 3*1e8
         D_l = 17
         omega = spectr.X*2*np.pi
-        omega_mean = sa.quantile(spectr, 1/2)
+        omega_mean = spectr.quantile(1/2)
         phase = l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
         if polarization == "ver": self.ver.Y *= np.exp(1j*phase)
         if polarization == "hor": self.hor.Y *= np.exp(1j*phase)
@@ -876,9 +886,9 @@ class ray:
             raise Exception("Polarization must be either \"ver\" or \"hor\".")
 
         if polarization == "hor":
-            self.hor = sa.smart_shift(self.hor, shift)
+            self.hor.smart_shift(shift, inplace = True)
         if polarization == "ver":
-            self.ver = sa.smart_shift(self.ver, shift)
+            self.ver.smart_shift(shift, inplace = True)
 
 
     def polarizer(self, transmission_polar):
@@ -890,14 +900,91 @@ class ray:
         if transmission_polar == "hor":
             self.ver.Y *= 0
 
-    def OSA(self, start = "min", end = "max"):
+    def powermeter(self):
+        h = np.sum(self.hor.Y*np.conjugate(self.hor.Y))
+        v = np.sum(self.ver.Y*np.conjugate(self.ver.Y))
+        h = np.real(h)
+        v = np.real(v)
+        h = round(h)
+        v = round(v)
+        print(u"Total power measured: {} \u03bcW\nPower on horizontal polarization: {} \u03bcW\nPower on vertical polarization: {} \u03bcW".format(h+v, h, v))
+
+    def OSA(self, start = None, end = None):
         import spectral_analysis as sa
 
         Y = self.hor.Y*np.conjugate(self.hor.Y) + self.ver.Y*np.conjugate(self.ver.Y)
         spectr = spectrum(self.hor.X, Y, "freq", "intensity")
-        sa.plot(spectr, title = "OSA", x_type = "freq", start = start, end = end, color = "green")
+        spectr.spacing = np.abs(spectr.spacing)
+        sa.plot(spectr, title = "OSA", start = start, end = end, color = "green")
         
         return spectr
+
+
+
+#                   ----------------
+#                   OSA measurements
+#                   ----------------
+
+
+
+def measurement(centre = 1550, span = 10):
+    '''
+    Performs single measurement with OSA and returns it as \"spectrum\" class object. \"centre\" and \"span\" are in nm. 
+    '''
+    import pyvisa
+    import pylab as plt
+    import numpy as np
+    import spectral_analysis as sa
+    from pyvisa.constants import VI_FALSE, VI_ATTR_SUPPRESS_END_EN, VI_ATTR_SEND_END_EN
+
+    rm = pyvisa.ResourceManager()
+    osa = rm.open_resource("TCPIP0::10.33.8.140::1045::SOCKET")
+    osa.set_visa_attribute(VI_ATTR_SUPPRESS_END_EN, VI_FALSE)
+    osa.set_visa_attribute(VI_ATTR_SEND_END_EN, VI_FALSE)
+    print(osa.query('open "anonymous"'))
+    print(osa.query(" "))
+    osa.write(":sens:wav:cent %fnm" % centre)
+    osa.write(":sens:wav:span %fnm" % span)
+    #osa.write(":trac:Y1:SCAL:UNIT DBM")
+
+    osa.write(":init:smode:1")
+    osa.write(":init")
+
+    osa.write(":trac:Y1:SCAL:UNIT DBM")
+    wait_for_scan = "0"
+    while "0" in wait_for_scan:
+        wait_for_scan = osa.query(":stat:oper:even?")
+
+    Lambda = osa.query(":trac:X? trA").split(",")
+    intensity = osa.query(":trac:Y? trA").split(",")
+    osa.close()
+
+    Lambda = np.asarray(Lambda)
+    Lambda = [float(i)/1e-9 for i in Lambda]
+    intensity = np.asarray(intensity)
+    intensity = [float(i) for i in intensity]
+
+    osa_spectrum = sa.spectrum(Lambda, intensity, "wl", "intensity")
+    return osa_spectrum
+
+
+def OSA(centre = 1550, span = 10):
+    '''
+    Plots continuous in time spectrum from OSA.
+    '''
+    import matplotlib.pyplot as plt
+    import spectral_analysis as sa
+
+    fig, ax = plt.subplots()
+
+    while True:
+        pure_spectrum = sa.measurement(centre = centre, span = span)
+        ax.clear()
+        ax.plot(pure_spectrum.X, pure_spectrum.Y, color = "red")
+        ax.set_title("OSA")
+        ax.set_xlabel("Wavelength [nm]")
+        ax.set_ylabel("Intensity")
+    plt.show()
 
 
 
@@ -913,7 +1000,7 @@ def spider(phase_spectrum,
            intensity_spectrum = None,
            phase_borders = None,
            what_to_return = None,
-           vis_param = None,
+           vis_param = 1/2,
            smoothing_period = None,
            plot_steps = False, 
            plot_phase = True,
@@ -951,18 +1038,22 @@ def spider(phase_spectrum,
     if isinstance(phase_spectrum, spectrum):
         p_spectrum = phase_spectrum.copy()
 
-    elif isinstance(phase_spectrum, str):    
-        spectrum_df = pd.read_csv(phase_spectrum, skiprows = 2)
-        p_spectrum = spectrum(spectrum_df.values[:, 0], spectrum_df.values[:, 1], "wl", "intensity")
+    elif isinstance(phase_spectrum, str):
+        p_spectrum = sa.load_csv(phase_spectrum)    
+
+    else:
+        raise Exception("Wrong \"phase_spectrum\" format.")
     
     # load data - temporal phase
 
     if isinstance(temporal_spectrum, spectrum):
         t_spectrum = temporal_spectrum.copy()
 
-    elif isinstance(temporal_spectrum, str):    
-        spectrum_df = pd.read_csv(temporal_spectrum, skiprows = 2)
-        t_spectrum = spectrum(spectrum_df.values[:, 0], spectrum_df.values[:, 1], "wl", "intensity")
+    elif isinstance(temporal_spectrum, str):
+        t_spectrum = sa.load_csv(temporal_spectrum)    
+
+    else:
+        raise Exception("Wrong \"temporal_spectrum\" format.")
 
     # zero padding
 
@@ -993,7 +1084,7 @@ def spider(phase_spectrum,
         min_freq -= delta
         max_freq += delta
         if plot_steps: 
-            sa.plot(s_freq,"orange", title = "Wavelength to frequency", x_type = "freq", start = min_freq, end = max_freq)
+            sa.plot(s_freq,"orange", title = "Wavelength to frequency", start = min_freq, end = max_freq)
 
     elif p_spectrum.x_type == "freq":
         s_freq = p_spectrum
@@ -1034,17 +1125,13 @@ def spider(phase_spectrum,
 
     # estimate time delay
     
-    if vis_param == None:
-        height = s_freq_t.visibility()
-    else:
-        height = vis_param
-
-    period = s_freq_t.find_period(height)[0]
+    period = s_freq_t.find_period(vis_param)[0]
     delay = 1/period
 
     # find exact value of time delay
 
     s_ft2 = s_ft.copy()
+    s_ft_return = s_ft.copy()        # if you wish it to return it later
     s_ft2.replace_with_zeros(end = delay*0.5)
     s_ft2.replace_with_zeros(start = delay*1.5)
     
@@ -1096,6 +1183,8 @@ def spider(phase_spectrum,
         
         shear = sa.find_shift(s_shear, s_shear_t)
         
+        if shear == 0:
+            raise Exception("Failed to find non zero shear.")
         if plot_shear:
             sa.compare_plots([s_shear, s_shear_t], 
                              start = -0.6, 
@@ -1113,8 +1202,8 @@ def spider(phase_spectrum,
     s_ift_t = s_ft_t.inv_fourier(inplace = False)    # temporal
     if plot_steps:
         s_ift2 = s_ift.copy()
-        s_ift2.X += mean 
-        sa.plot(s_ift2, title = "Inverse Fourier transformed", x_type = "freq", start = min_freq, end = max_freq, what_to_plot = "abs")
+        s_ift2.X += np.real(mean) 
+        sa.plot(s_ift2, title = "Inverse Fourier transformed", start = min_freq, end = max_freq, what_to_plot = "abs")
 
     # cut spectrum to area of significant phase
 
@@ -1158,6 +1247,7 @@ def spider(phase_spectrum,
 
     # plot phase difference
 
+    diff_spectrum = spectrum(X, values, "freq", "phase")    # if you wish to return it later
     if plot_phase:
 
         plt.scatter(X, np.real(values), color = "orange", s = 1)
@@ -1169,6 +1259,7 @@ def spider(phase_spectrum,
 
     # firstly initial interpolation to estimate vertical translation to be made
 
+    
     X = X[::integrate_interval]
     values = values[::integrate_interval]
 
@@ -1208,8 +1299,7 @@ def spider(phase_spectrum,
         if isinstance(intensity_spectrum, spectrum):
             intensity = intensity_spectrum
         elif isinstance(intensity_spectrum, str):
-            intensity_df = pd.read_csv(intensity_spectrum, skiprows = 2)
-            intensity = spectrum(intensity_df.X, intensity_df.Y, "wl", "intensity")
+            intensity = sa.load_csv(intensity_spectrum)
 
         if intensity.x_type == "wl":
             intensity.wl_to_freq()
@@ -1228,8 +1318,8 @@ def spider(phase_spectrum,
     pulse = sa.recover_pulse(interpolated_phase2, intensity)
 
     if plot_pulse:
-        min_pulse = sa.quantile(pulse, 0.25)
-        max_pulse = sa.quantile(pulse, 0.75)
+        min_pulse = pulse.quantile(0.25)
+        max_pulse = pulse.quantile(0.75)
         delta = (max_pulse - min_pulse)*3
         sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "abs")
 
@@ -1239,3 +1329,11 @@ def spider(phase_spectrum,
         return pulse
     elif what_to_return == "phase":
         return phase_spectrum, interpolated_phase
+    elif what_to_return == "phase_diff":
+        return diff_spectrum
+    elif what_to_return == "FT":
+        return s_ft_return
+    elif what_to_return == None:
+        pass
+    else:
+        raise Exception("\"what to return\" must be \"pulse\", \"phase\", \"phase_diff\", \"FT\" or None.")
