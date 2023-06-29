@@ -28,11 +28,15 @@ class spectrum:
         self.Y = Y
         self.x_type = x_type
         self.y_type = y_type
-        self.spacing = np.mean(np.diff(np.real(self.X)))
+        self.spacing = self.calc_spacing()
 
 
     def __len__(self):
         return len(self.X)
+    
+
+    def calc_spacing(self):
+        return np.mean(np.diff(np.real(self.X)))
     
 
     def copy(self):
@@ -54,6 +58,7 @@ class spectrum:
             self.X = freq
             self.Y = intensity
             self.x_type = "freq"
+            self.spacing = self.calc_spacing()
         
         else:
             return spectrum(freq, intensity, "freq", self.y_type)
@@ -107,6 +112,7 @@ class spectrum:
         if inplace == True:
             self.X = new_freq
             self.Y = new_intens
+            self.spacing = self.calc_spacing()
         
         else:
             return spectrum(new_freq, new_intens, self.x_type, self.y_type)
@@ -184,6 +190,7 @@ class spectrum:
             self.X = time
             self.Y = FT_intens
             self.x_type = "time"
+            self.spacing = self.calc_spacing()
         else:
             return spectrum(time, FT_intens, "time", self.y_type)
             
@@ -217,6 +224,7 @@ class spectrum:
             self.X = freq
             self.Y = FT_intens
             self.x_type = "freq"
+            self.calc_spacing()
         else:
             return spectrum(freq, FT_intens, "freq", self.y_type)
         
@@ -268,10 +276,8 @@ class spectrum:
         return np.mean(diff_cut), np.std(diff_cut)
     
 
-    def visibility(self):   # TODO the functions returns height where greatest number of fringes is seen, meanwhile we want a plateau
-        '''
-        BE AWARE: not classical concept of visibility is applied. 
-        
+    def naive_visibility(self):
+        '''        
         Function returns float in range (0, 1) which is the fraction of maximum intensity, 
         at which the greatest number of fringes is observable.
         '''
@@ -279,13 +285,13 @@ class spectrum:
         import numpy as np
         from math import floor
 
-        max = np.max(self.Y)
+        maximum = np.max(self.Y)
 
         # Omg, this loop is so smart. Sometimes I impress myself.
 
         heights = []
-        sample_levels = 100
-        for height in np.linspace(0, max, sample_levels, endpoint = True):
+        sample_levels = 1000
+        for height in np.linspace(0, maximum, sample_levels, endpoint = True):
             if height == 0: 
                 continue
             safe_Y = self.Y.copy()
@@ -295,14 +301,39 @@ class spectrum:
             safe_Y[safe_Y == 2] = 0
             heights.append(np.sum(safe_Y))
 
-        heights = np.array(heights)
+        heights = np.array(heights) # height is array of numbers of fringes on given level (times 2)
         fring_num = np.max(heights)
         indices = np.array([i for i in range(sample_levels-1) if heights[i] == fring_num])
-        the_index = indices[floor(len(indices)/2)] 
-        level = the_index/sample_levels*max
+        the_index = indices[0] #[floor(len(indices)/2)] 
 
-        return level/max
+        level = the_index/sample_levels
+        print(1-level)
+        return 1-level
     
+
+    def visibility(self, plot = False):
+        '''
+        Find visibility of interference fringes. First maxima and minima of fringes are found, then they are interpolated 
+        and corresponding sums of intensities are calculated. Visibility is then (max_int-min_int)/max_int
+
+        Optionally you can plot plot interpolated maxima and minima. It looks very nice.
+        '''
+        import numpy as np
+        import spectral_analysis as sa
+
+        safe_X = self.X.copy()
+        minima = find_minima(self)
+        maxima = find_maxima(self)
+        inter_minima = sa.interpolate(minima, safe_X)
+        inter_maxima = sa.interpolate(maxima, safe_X)
+        max_sum = np.sum(inter_maxima.Y)
+        min_sum = np.sum(inter_minima.Y)
+
+        if True:
+            sa.compare_plots([self, inter_maxima, inter_minima], colors = ["deepskyblue", "green", "red"], title = "Visibility of {}".format(round((max_sum-min_sum)/max_sum, 3)))
+        
+        return (max_sum-min_sum)/max_sum
+
 
     def replace_with_zeros(self, start = None, end = None, inplace = True):
         '''
@@ -329,8 +360,24 @@ class spectrum:
             self.Y = new_Y
         if inplace == False:
             return spectrum(self.X, new_Y, self.x_type, self.y_type)
-    
+        
 
+    def shift(self, shift, inplace = True):
+        '''
+        Shifts the spectrum by X axis. Warning: only values on X axis are modified.
+        '''
+        import numpy as np
+        from math import floor
+
+        new_X = self.X.copy()
+        new_X = new_X + shift
+
+        if inplace == True:
+            self.X = new_X
+        if inplace == False:
+            return spectrum(new_X, self.Y, self.x_type, self.y_type)
+
+    
     def smart_shift(self, shift = None, inplace = True):
         '''
         Shift spectrum by rolling Y-axis. Value of shift is to be given in X axis units. If shift = \"None\",
@@ -357,22 +404,22 @@ class spectrum:
         if inplace == False:
             return spectrum(self.X, Y_new, self.x_type, self.y_type)
         
-
-    def shift(self, shift, inplace = True):
+    def very_smart_shift(self, shift, inplace = True):
         '''
-        Shifts the spectrum by X axis. Warning: only values on X axis are modified.
+        Shift spectrum by applying FT, multiplying by linear temporal phase and applying IFT. Value of shift is to be given in X axis units.
         '''
         import numpy as np
-        from math import floor
 
-        new_X = self.X.copy()
-        new_X = new_X + shift
-
+        X2 = self.X.copy()
+        Y2 = self.Y.copy()
+        spectrum2 = spectrum(X2, Y2, self.x_type, self.y_type)
+        spectrum2.fourier()
+        spectrum2.Y *= np.exp(2j*np.pi*shift*spectrum2.X)
+        spectrum2.inv_fourier()
         if inplace == True:
-            self.X = new_X
+            self.Y = spectrum2.Y
         if inplace == False:
-            return spectrum(new_X, self.Y, self.x_type, self.y_type)
-
+            return spectrum2
 
     def zero_padding(self, how_much, inplace = True):
         '''
@@ -465,13 +512,28 @@ class spectrum:
         if inplace == False:
             return spectrum(X_safe, Y_safe, self.x_type, self.y_type)
         
-    def FWMH(self):
+    def power(self):
+        '''
+        Power of a spectrum. In other words - integral of absolute value of it.
+        '''
+        import numpy as np
+        from math import floor, log10
+
+        # simple function to round to significant digits
+        def round_to_dig(x, n):
+            return round(x, -int(floor(log10(abs(x)))) + n - 1)
+    
+        return  round_to_dig(np.sum(self.X*np.conjugate(self.X)), 3)
+        
+    def FWHM(self):
         '''
         Calculate Full Width at Half Maximum. If multiple peaks are present in spectrum, the function might not work properly.
         '''
 
         import numpy as np
 
+        left = None
+        right = None
         peak = np.max(self.Y)
         for idx, y in enumerate(self.Y):
             if y > peak/2:
@@ -480,8 +542,10 @@ class spectrum:
             if y > peak/2:
                 right = self.__len__() - idx
 
+        if left == None or right == None:
+            raise Exception("Failed to calculate FWHM due to very strange error.")
         width = right-left
-        width *= (self.X[1]-self.X[2])
+        width *= self.spacing
 
         return np.abs(width)
 
@@ -578,6 +642,42 @@ def interpolate(old_spectrum, new_X):
     new_Y = model(np.real(new_X))
 
     return spectrum(new_X, new_Y, old_spectrum.x_type, old_spectrum.y_type)
+
+
+def find_minima(fringes_spectrum):
+    '''
+    Find minima of interference fringes by looking at nearest neighbors. Spectrum with minima is returned.
+    '''
+    import spectral_analysis as sa
+
+    X = []
+    Y = []
+    for i in range(len(fringes_spectrum)):
+        if i in [0, 1, len(fringes_spectrum) - 2, len(fringes_spectrum) - 1]:
+            continue
+        if fringes_spectrum.Y[i-2] >= fringes_spectrum.Y[i-1] >= fringes_spectrum.Y[i] <= fringes_spectrum.Y[i+1] <= fringes_spectrum.Y[i+2]:
+            X.append(fringes_spectrum.X[i])
+            Y.append(fringes_spectrum.Y[i])
+    
+    return sa.spectrum(np.array(X), np.array(Y), fringes_spectrum.x_type, fringes_spectrum.y_type)
+
+
+def find_maxima(fringes_spectrum):
+    '''
+    Find maxima of interference fringes by looking at nearest neighbors. Spectrum with maxima is returned.
+    '''
+    import spectral_analysis as sa
+
+    X = []
+    Y = []
+    for i in range(len(fringes_spectrum)):
+        if i in [0, 1, len(fringes_spectrum) - 2, len(fringes_spectrum) - 1]:
+            continue
+        if fringes_spectrum.Y[i-2] <= fringes_spectrum.Y[i-1] <= fringes_spectrum.Y[i] >= fringes_spectrum.Y[i+1] >= fringes_spectrum.Y[i+2]:
+            X.append(fringes_spectrum.X[i])
+            Y.append(fringes_spectrum.Y[i])
+    
+    return sa.spectrum(np.array(X), np.array(Y), fringes_spectrum.x_type, fringes_spectrum.y_type)
 
 
 def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs", start = None, end = None):
@@ -681,7 +781,7 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
     plt.show()
 
 
-def compare_plots(spectra, title = "Spectra", legend = None, start = None, end = None, abs = False):
+def compare_plots(spectra, title = "Spectra", legend = None, colors = None, start = None, end = None, abs = False):
     '''
     Show several spectra on single plot.
 
@@ -721,7 +821,11 @@ def compare_plots(spectra, title = "Spectra", legend = None, start = None, end =
     
     # and plotting
 
-    colors = ["violet", "blue", "green", "yellow", "orange", "red", "brown", "black"]
+    if colors == None:
+        colours = ["violet", "blue", "green", "yellow", "orange", "red", "brown", "black"]
+    else:
+        colours = colors
+
     for c, spectrum in enumerate(spectra):
         safe_spectrum = spectrum.copy()
         if abs:
@@ -735,7 +839,7 @@ def compare_plots(spectra, title = "Spectra", legend = None, start = None, end =
         else:
             e = np.searchsorted(safe_spectrum.X, end)
 
-        plt.plot(safe_spectrum.X[s:e], safe_spectrum.Y[s:e], color = colors[c])
+        plt.plot(safe_spectrum.X[s:e], safe_spectrum.Y[s:e], color = colours[c])
 
     plt.grid()
     plt.title(title)
@@ -781,6 +885,7 @@ def find_shift(spectrum_1, spectrum_2):
     '''
 
     import numpy as np
+    from math import floor
 
     spectrum1 = spectrum_1.copy()
     spectrum2 = spectrum_2.copy()
@@ -803,16 +908,33 @@ def find_shift(spectrum_1, spectrum_2):
     
     minimum = np.sum(np.abs(spectrum1.Y)**2)
     idx = 0
-    for i in range(len(spectrum1)):
+    width = np.max(np.array([spectrum1.FWHM(), spectrum2.FWHM()]))
+    index_width = floor(width/spectrum1.spacing)
+    for i in range(-index_width, index_width):
          if minimum > error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i)):
              minimum = error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i))
              idx = i
-
-    if idx > len(spectrum1.Y)/2:
-        idx = len(spectrum1.Y) - idx
     
     return spectrum1.spacing*idx
 
+
+def ratio(visibility):
+    '''
+    Given visibility of interference fringes in spectrum, the function returns ratio of intensities of two pulses that 
+    are responsible for the interference pattern. Ratio of lower intensity to the greater is calculated.
+    '''
+    import numpy as np
+
+    def vis(x):
+        '''Inverse function of ratio.'''
+        return 4*np.sqrt(x)/(1+np.sqrt(x))**2
+    
+    vis = np.vectorize(vis)
+    X = np.linspace(0, 1, 20000)
+    Y = vis(X)
+    r = np.searchsorted(Y, visibility)
+
+    return X[r]
 
 
 #                   ---------
@@ -968,23 +1090,30 @@ def measurement(centre = 1550, span = 10):
     return osa_spectrum
 
 
-def OSA(centre = 1550, span = 10):
+def OSA(centre = 1550, span = 10, plot_size = [10, 10]):
     '''
-    Plots continuous in time spectrum from OSA.
+    Plots continuous in time spectrum from OSA. \"plot_size\" is tuple of dimensions of image to be shown in cm
     '''
     import matplotlib.pyplot as plt
     import spectral_analysis as sa
+    from IPython.display import display, clear_output
+    import time
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(fig_size = [plot_size[0]/2.54, plot_size[1]/2.54])
 
+    start_time = time.time()
     while True:
+        current_time = time.time()
+        if current_time - start_time > 1800:
+            raise RuntimeWarning("Measurement lasted longer than 0.5h.")
         pure_spectrum = sa.measurement(centre = centre, span = span)
         ax.clear()
         ax.plot(pure_spectrum.X, pure_spectrum.Y, color = "red")
         ax.set_title("OSA")
         ax.set_xlabel("Wavelength [nm]")
         ax.set_ylabel("Intensity")
-    plt.show()
+        display(fig)
+        clear_output(wait=True)
 
 
 
@@ -1139,7 +1268,7 @@ def spider(phase_spectrum,
     if isinstance(idx, np.ndarray): 
         idx = idx[0]
     delay2 = s_ft.X[idx]
-    
+
     # and filter the spectrum to keep only one of site peaks
     
     s_ft.replace_with_zeros(end = delay2*0.5)           # spider
@@ -1155,25 +1284,21 @@ def spider(phase_spectrum,
     
     if shear == None:
 
-        s_shear.replace_with_zeros(start = None, end = -delay2*0.5)          # spider
+        s_shear.replace_with_zeros(start = None, end = -delay2*0.5)         # spider
         s_shear.replace_with_zeros(start = delay2*0.5, end = None)
-
-        s_shear_t.replace_with_zeros(start = None, end = -delay2*0.5)      # temporal
+        
+        s_shear_t.replace_with_zeros(start = None, end = -delay2*0.5)       # temporal
         s_shear_t.replace_with_zeros(start = delay2*0.5, end = None)
 
         s_shear.inv_fourier()
         s_shear_t.inv_fourier()
 
-        X_shear = np.real(s_shear.X)
-        X_shear_t = np.real(s_shear_t.X)
-        Y_shear = np.abs(s_shear.Y)
-        Y_shear_t = np.abs(s_shear_t.Y)
+        s_shear.Y = np.abs(s_shear.Y)
+        s_shear_t.Y = np.abs(s_shear_t.Y)
 
-        Y_shear_t /= 2
-        Y_shear -= Y_shear_t
-
-        s_shear = spectrum(X_shear, Y_shear, s_shear.x_type, s_shear.y_type)
-        s_shear_t = spectrum(X_shear, Y_shear_t, s_shear.x_type, s_shear.y_type)
+        mu = sa.ratio(t_spectrum.visibility())
+        s_shear_t.Y /= (1+mu)
+        s_shear.Y -= (mu*s_shear_t.Y)
 
         s_shear.replace_with_zeros(start = None, end = -0.5) # TODO: maybe automatize values of end and start?
         s_shear.replace_with_zeros(start = 0.5, end = None)
@@ -1182,13 +1307,14 @@ def spider(phase_spectrum,
         s_shear_t.replace_with_zeros(start = 0.5, end = None)
         
         shear = sa.find_shift(s_shear, s_shear_t)
+        shear = np.abs(shear)
         
         if shear == 0:
             raise Exception("Failed to find non zero shear.")
         if plot_shear:
             sa.compare_plots([s_shear, s_shear_t], 
-                             start = -0.6, 
-                             end = 0.6, 
+                             start = -0.4, 
+                             end = 0.4, 
                              abs = True, 
                              title = "Shear of {} THz".format(round(shear,5)),
                              legend = ["Sheared", "Not sheared"])
@@ -1230,6 +1356,7 @@ def spider(phase_spectrum,
     # extract phase
 
     values = phase_values - temporal_phase
+    
     values -= values[0]                     # deletes linear aberration in phase
     values = np.unwrap(values)
 
@@ -1251,7 +1378,11 @@ def spider(phase_spectrum,
     if plot_phase:
 
         plt.scatter(X, np.real(values), color = "orange", s = 1)
-        plt.title("Spectral phase difference between pulse and its sheared copy")
+        if smoothing_period == None:
+            plt.title("Spectral phase difference between pulse and its sheared copy")
+        else:
+            plt.title("Spectral phase difference between pulse and its sheared copy\n[smoothed with period of {} THz].".format(smoothing_period))
+
         plt.xlabel("Frequency [THz]")
         plt.ylabel("Spectral phase")
         plt.grid()
