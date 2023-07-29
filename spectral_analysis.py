@@ -1129,8 +1129,8 @@ def spider(phase_spectrum,
            intensity_spectrum = None,
            phase_borders = None,
            what_to_return = None,
-           vis_param = 1/2,
            smoothing_period = None,
+           find_shear = "least squares",
            plot_steps = False, 
            plot_phase = True,
            plot_shear = False, 
@@ -1140,22 +1140,31 @@ def spider(phase_spectrum,
 
     ARGUMENTS:
 
-    phase_spectrum - spectrum with interference pattern created in a SPIDER setup. I should be a pandas DataFrame with wavelength or frequency in first column and intensity in the second OR path of .csv file with that data.
+    phase_spectrum - spectrum with interference pattern created in a SPIDER setup. I should be either spectrum with wavelength or frequency in X-column OR path of .csv file with that data.
+
+    temporal_spectrum - analogous to phase_spectrum, but measured with EOPM off.
 
     shear - spectral shear applied by EOPM given in frequency units (default THz). If \"None\", then shear is estimated using fourier filtering.
 
-    intensity_spectrum - amplitude of initial not interfered pulse. Similar as "phase_spectrum" it might be either DataFrame of string. If "None", then its approximation derived from SPIDER algorithm is used.  
+    intensity_spectrum - amplitude of initial not interfered pulse. Similar as "phase_spectrum" it might be either spectrum oo pathname. If "None", then its approximation derived from SPIDER algorithm is used.  
     
     phase_borders - specify range of frequencies (in THz), where you want to find spectral phase. If to big, boundary effects may appear. If "None", the borders are estimated by calculating quantiles of intensity.
 
-    what_to_return - if None, then RETURNS nothing. If "pulse", then RETURNS DataFrame with reconstructed pulse. If "phase", then RETURNS tuple with two DataFrame - phase and interpolated phase.
+    what_to_return - if None, then RETURNS nothing. If "pulse", then RETURNS spectrum with reconstructed pulse. If "phase", then RETURNS tuple with two spectra - phase and interpolated phase.
+
+    smoothing_period - if None, nothing happens. Otherwise the phase difference is smoothed by taking a moving average within an interval of smoothing_period.
+    
+    find_shear - method of finding shear. If "center of mass", then shift of center of mass between sheared and non-sheared spectrum is computed. If "least_squares", then shear is found as value of shift minimizing squared difference between spectra.
 
     plot_steps - if to plot all intermediate steps of the SPIDER algorithm.
 
-    plot_phase - if to plot found spectral phase.
+    plot_phase - if to plot found the spectral phase.
 
-    plot_pulse - if to plot reconstructed pulse.
+    plot shear - if to plot the spectra used to find the shear.
+
+    plot_pulse - if to plot the reconstructed pulse.
     '''
+
     import pandas as pd
     import numpy as np
     from math import floor as flr
@@ -1254,7 +1263,7 @@ def spider(phase_spectrum,
 
     # estimate time delay
     
-    period = s_freq_t.find_period(vis_param)[0]
+    period = s_freq_t.find_period(1/3+2/3*(1-s_freq_t.visibility()))[0] # look for the fringes in 1/3 distance between visibility level and max intensity
     delay = 1/period
 
     # find exact value of time delay
@@ -1306,7 +1315,11 @@ def spider(phase_spectrum,
         s_shear_t.replace_with_zeros(start = None, end = -0.5)
         s_shear_t.replace_with_zeros(start = 0.5, end = None)
         
-        shear = sa.find_shift(s_shear, s_shear_t)
+        if find_shear == "least squares":
+            shear = sa.find_shift(s_shear, s_shear_t)
+        elif find_shear == "center of mass":
+            shear = s_shear.quantile(1/2) - s_shear_t.quantile(1/2)
+
         shear = np.abs(shear)
         
         if shear == 0:
@@ -1353,12 +1366,23 @@ def spider(phase_spectrum,
     phase_values = np.angle(phase_values)
     temporal_phase = np.angle(temporal_phase)
 
+    plt.scatter(range(len(phase_values)), phase_values, s = 1, color = "red")
+    plt.grid()
+    plt.title("Phase values")
+    plt.show()
+    plt.scatter(range(len(temporal_phase)), temporal_phase, s = 1, color = "darkblue")
+    plt.grid()
+    plt.title("Phase values")
+    plt.show()
+    
     # extract phase
 
+    phase_values -= phase_values[0]             # deletes linear aberration in phase
+    phase_values = np.unwrap(phase_values)
+    temporal_phase -= temporal_phase[0]
+    temporal_phase = np.unwrap(temporal_phase)
+
     values = phase_values - temporal_phase
-    
-    values -= values[0]                     # deletes linear aberration in phase
-    values = np.unwrap(values)
 
     if smoothing_period != None:
         V = sa.spectrum(X, values, "freq", "phase")
