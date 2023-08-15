@@ -673,6 +673,70 @@ def interpolate(old_spectrum, new_X):
     return spectrum(new_X, new_Y, old_spectrum.x_type, old_spectrum.y_type)
 
 
+def fit_fiber_length(phase_spectrum):
+    '''
+    Fit parabolic spectral phase to the given spectrum and return the length of chirping fiber corresponding to that phase.
+    '''
+    from scipy.optimize import curve_fit
+
+    def chirp_phase(frequency, centre, fiber_length):
+        c = 299792458 
+        l_0 = c/(centre*1e3)
+        D_l = 17
+        omega = frequency*2*np.pi
+        omega_mean = centre*2*np.pi
+        return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
+
+    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [80, 192])
+    return np.abs(param[1])
+    
+def chirp_r2(phase_spectrum, fiber_length, plot = False):
+    '''
+    Given spectral phase spectrum and the length of fiber employed in experiment, fit corresponding spectral phase to
+    experimental data (only fitting center) and return the R^2 statistics judging quality of that fit.
+    Additionally you can plot both phases on a single plot.
+    '''
+    from scipy.optimize import curve_fit
+    import spectral_analysis as sa
+    import numpy as np
+
+    def R2(data_real, data_pred):
+        TSS = np.sum(np.power(data_real - np.mean(data_real), 2))
+        RSS = np.sum(np.power(data_real - data_pred, 2))
+        return (TSS - RSS)/TSS
+    
+    if np.mean(phase_spectrum.Y) < 0:
+        sign = -1
+    else:
+        sign = 1
+
+    def chirp_phase(frequency, centre):
+        c = 299792458 
+        l_0 = c/(centre*1e3)
+        D_l = 17
+        omega = frequency*2*np.pi
+        omega_mean = centre*2*np.pi
+        return sign*l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
+    
+    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, p0 = 192)
+    centrum = param[0]
+
+    Y_real = phase_spectrum.Y.copy()
+    Y_pred = chirp_phase(phase_spectrum.X, centrum)
+    score = R2(Y_real, Y_pred)
+
+    if plot:
+        reality = sa.spectrum(phase_spectrum.X.copy(), Y_real, x_type = "freq", y_type = "phase")
+        prediction = sa.spectrum(phase_spectrum.X.copy(), Y_pred, x_type = "freq", y_type = "phase")
+        sa.compare_plots([reality, prediction], 
+                         title = "Experimental and model chirp phase for fiber of length {}\nR^2 score equal to {}".format(fiber_length, round(score, 3)),
+                         legend = ["Experiment", "Model"],
+                         colors = ["darkorange", "darkgreen"])
+    return score
+        
+
+
+
 def find_minima(fringes_spectrum):
     '''
     Find minima of interference fringes by looking at nearest neighbors. Spectrum with minima is returned.
