@@ -1499,15 +1499,15 @@ def spider(phase_spectrum,
 
     values = phase_values - temporal_phase
     values = np.unwrap(values)
-    values -= values[0]             # deletes linear aberration in phase
-
+    values -= np.mean(values)
+    #values -= values[0]             # deletes linear aberration in phase
 
     if smoothing_period != None:
         V = sa.spectrum(X_sampled, values, "freq", "phase")
         V.moving_average(smoothing_period)
         values = V.Y
 
-    values -= values[flr(len(values)/2)]    # without that line, spectral phase will later always start at zero and grow
+    #values -= values[flr(len(values)/2)]    # without that line, spectral phase will later always start at zero and grow
 
     # prepare data to plot
     
@@ -1552,8 +1552,8 @@ def spider(phase_spectrum,
             intensity.wl_to_freq()
             intensity.constant_spacing()
 
-        start = np.searchsorted(intensity.X, interpolated_phase.X[0])
-        num = len(interpolated_phase)
+        start = np.searchsorted(intensity.X, X_continuous[0])
+        num = len(X_continuous)
         end = start + num
         intensity.cut(start = start, end = end, how = "index")
 
@@ -1571,6 +1571,7 @@ def spider(phase_spectrum,
     Y_continuous = interpolated_phase_first.Y
     Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
 
+    '''
     # extract the pulse to estimate remaining temporal phase
 
     phase_spectrum = spectrum(X_sampled, Y_sampled, "freq", "phase")
@@ -1588,11 +1589,9 @@ def spider(phase_spectrum,
     Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
     phase_spectrum_second = spectrum(X_sampled, Y_sampled, "freq", "phase")
     interpolated_phase_second = sa.interpolate(phase_spectrum_second, X_continuous)
-    
+    '''
     # remove offset
 
-    Y_continuous = interpolated_phase_second.Y
-    Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
     phase_spectrum = spectrum(X_sampled, Y_sampled, "freq", "phase")
     interpolated_phase = sa.interpolate(phase_spectrum, X_continuous)
 
