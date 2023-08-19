@@ -690,6 +690,7 @@ def fit_fiber_length(phase_spectrum):
     param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [80, 192])
     return np.abs(param[1])
     
+
 def chirp_r2(phase_spectrum, fiber_length, plot = False):
     '''
     Given spectral phase spectrum and the length of fiber employed in experiment, fit corresponding spectral phase to
@@ -733,8 +734,6 @@ def chirp_r2(phase_spectrum, fiber_length, plot = False):
                          legend = ["Experiment", "Model"],
                          colors = ["darkorange", "darkgreen"])
     return score
-        
-
 
 
 def find_minima(fringes_spectrum):
@@ -1499,15 +1498,15 @@ def spider(phase_spectrum,
 
     values = phase_values - temporal_phase
     values = np.unwrap(values)
-    values -= values[0]             # deletes linear aberration in phase
-
+    values -= np.mean(values)
+    #values -= values[0]             # deletes linear aberration in phase
 
     if smoothing_period != None:
         V = sa.spectrum(X_sampled, values, "freq", "phase")
         V.moving_average(smoothing_period)
         values = V.Y
 
-    values -= values[flr(len(values)/2)]    # without that line, spectral phase will later always start at zero and grow
+    #values -= values[flr(len(values)/2)]    # without that line, spectral phase will later always start at zero and grow
 
     # prepare data to plot
     
@@ -1552,61 +1551,37 @@ def spider(phase_spectrum,
             intensity.wl_to_freq()
             intensity.constant_spacing()
 
-        start = np.searchsorted(intensity.X, interpolated_phase.X[0])
-        num = len(interpolated_phase)
+        start = np.searchsorted(intensity.X, X_continuous[0])
+        num = len(X_continuous)
         end = start + num
         intensity.cut(start = start, end = end, how = "index")
 
-    # firstly initial interpolation to estimate vertical translation to be made
+    # recover discrete phase
     
     integration_start = flr((len(X_sampled) % integrate_interval)/2) # we want to extrapolate equally on both sides
 
     X_sampled = X_sampled[integration_start::integrate_interval]
     values = values[integration_start::integrate_interval]
-
     Y_sampled = np.cumsum(values)
 
     phase_spectrum_first = spectrum(X_sampled, Y_sampled, "freq", "phase")
+
+    # firstly initial interpolation to translate spectrum to X-axis (global phase standarization)
+
     interpolated_phase_first = sa.interpolate(phase_spectrum_first, X_continuous)
     Y_continuous = interpolated_phase_first.Y
-    Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
 
-    # extract the pulse to estimate remaining temporal phase
+    if np.mean(Y_continuous) > Y_continuous[flr(len(Y_continuous)/2)]:
+        Y_sampled -= np.min(Y_continuous)
+    else:
+        Y_sampled -= np.max(Y_continuous)
 
     phase_spectrum = spectrum(X_sampled, Y_sampled, "freq", "phase")
+
+    # proper interpolation
+
     interpolated_phase = sa.interpolate(phase_spectrum, X_continuous)
-
     interpolated_phase_zeros = interpolated_phase.zero_padding(2, inplace = False)  
-    intensity.zero_padding(2)
-
-    pulse_not_centered = sa.recover_pulse(interpolated_phase_zeros, intensity)
-    tau = pulse_not_centered.quantile(0.5)
-
-    # remove temporal phase
-
-    Y_sampled -= X_sampled * tau * 2 * np.pi
-    Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
-    phase_spectrum_second = spectrum(X_sampled, Y_sampled, "freq", "phase")
-    interpolated_phase_second = sa.interpolate(phase_spectrum_second, X_continuous)
-    
-    # remove offset
-
-    Y_continuous = interpolated_phase_second.Y
-    Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
-    phase_spectrum = spectrum(X_sampled, Y_sampled, "freq", "phase")
-    interpolated_phase = sa.interpolate(phase_spectrum, X_continuous)
-
-    # extract the pulse
-
-    interpolated_phase_zeros = interpolated_phase.zero_padding(2, inplace = False)  
-    pulse = sa.recover_pulse(interpolated_phase_zeros, intensity)
-
-    if plot_pulse:
-        min_pulse = pulse.quantile(0.25)
-        max_pulse = pulse.quantile(0.75)
-        delta = (max_pulse - min_pulse)*3
-        sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "real")
-        print(pulse.quantile(0.5))
 
     # plot phase
 
@@ -1619,6 +1594,18 @@ def spider(phase_spectrum,
         plt.ylabel("Spectral phase [rad]")
         plt.grid()
         plt.show()
+
+    # extract the pulse
+
+    intensity.zero_padding(2)
+    pulse = sa.recover_pulse(interpolated_phase_zeros, intensity)
+
+    if plot_pulse:
+        min_pulse = pulse.quantile(0.25)
+        max_pulse = pulse.quantile(0.75)
+        delta = (max_pulse - min_pulse)*3
+        sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "real")
+        print(pulse.quantile(0.5))
 
     # return what's needed
 
