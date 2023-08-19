@@ -1096,10 +1096,10 @@ class ray:
             raise Exception("Polarization must be either \"ver\" or \"hor\".")
 
         if polarization == "ver":
-            self.ver.Y *= np.exp(np.pi*2j*delay*self.ver.X)
+            self.ver.Y = self.ver.Y * np.exp(np.pi*2j*delay*self.ver.X)
 
         elif polarization == "hor":
-            self.hor.Y *= np.exp(np.pi*2j*delay*self.hor.X)
+            self.hor.Y = self.hor.Y * np.exp(np.pi*2j*delay*self.hor.X)
 
 
     def rotate(self, angle):    # there is small problem because after rotation interference pattern are the same and should be negatives
@@ -1490,22 +1490,20 @@ def spider(phase_spectrum,
 
     phase_values = s_cut.Y.copy()
     temporal_phase = s_cut_t.Y.copy()
-    X = s_cut.X.copy()
+    X_sampled = s_cut.X.copy()
 
     phase_values = np.angle(phase_values)
     temporal_phase = np.angle(temporal_phase)
     
     # extract phase
 
-    phase_values -= phase_values[0]             # deletes linear aberration in phase
-    phase_values = np.unwrap(phase_values)
-    temporal_phase -= temporal_phase[0]
-    temporal_phase = np.unwrap(temporal_phase)
-
     values = phase_values - temporal_phase
+    values = np.unwrap(values)
+    values -= values[0]             # deletes linear aberration in phase
+
 
     if smoothing_period != None:
-        V = sa.spectrum(X, values, "freq", "phase")
+        V = sa.spectrum(X_sampled, values, "freq", "phase")
         V.moving_average(smoothing_period)
         values = V.Y
 
@@ -1513,15 +1511,15 @@ def spider(phase_spectrum,
 
     # prepare data to plot
     
-    X += mean + shear
-    X2 = X.copy()
+    X_sampled += mean + shear
+    X_continuous = X_sampled.copy()
 
     # plot phase difference
 
-    diff_spectrum = spectrum(X, values, "freq", "phase")    # if you wish to return it later
+    diff_spectrum = spectrum(X_sampled, values, "freq", "phase")    # if you wish to return it later
     if plot_phase:
 
-        plt.scatter(X, np.real(values), color = "orange", s = 1)
+        plt.scatter(X_sampled, np.real(values), color = "orange", s = 1)
         if smoothing_period == None:
             plt.title("Spectral phase difference between pulse and its sheared copy")
         else:
@@ -1529,38 +1527,6 @@ def spider(phase_spectrum,
 
         plt.xlabel("Frequency [THz]")
         plt.ylabel("Spectral phase")
-        plt.grid()
-        plt.show()
-
-    # firstly initial interpolation to estimate vertical translation to be made
-    
-    integration_start = flr((len(X) % integrate_interval)/2) # we want to extrapolate equally on both sides
-
-    X = X[integration_start::integrate_interval]
-    values = values[integration_start::integrate_interval]
-
-    Y = np.cumsum(values)
-
-    phase_spectrum_old = spectrum(X, Y, "freq", "phase")
-    interpolated_phase_old = sa.interpolate(phase_spectrum_old, X2)
-    Y2 = interpolated_phase_old.Y
-    Y -= Y2[flr(len(Y2)/2)]
-
-    # now proper interpolation
-
-    phase_spectrum = spectrum(X, Y, "freq", "phase")
-    interpolated_phase = sa.interpolate(phase_spectrum, X2)
-
-    # plot phase
-
-    if plot_phase:
-
-        plt.scatter(X, Y, color = "orange", s = 20)
-        plt.plot(interpolated_phase.X, interpolated_phase.Y, color = "green")
-        plt.title("Spectral phase of original pulse")
-        plt.legend(["Phase reconstructed from SPIDER", "Interpolated phase"], bbox_to_anchor = [1, 1])
-        plt.xlabel("Frequency [THz]")
-        plt.ylabel("Spectral phase [rad]")
         plt.grid()
         plt.show()
 
@@ -1591,18 +1557,68 @@ def spider(phase_spectrum,
         end = start + num
         intensity.cut(start = start, end = end, how = "index")
 
-    # extract the pulse
+    # firstly initial interpolation to estimate vertical translation to be made
+    
+    integration_start = flr((len(X_sampled) % integrate_interval)/2) # we want to extrapolate equally on both sides
 
-    interpolated_phase2 = interpolated_phase.zero_padding(2, inplace = False)  
+    X_sampled = X_sampled[integration_start::integrate_interval]
+    values = values[integration_start::integrate_interval]
+
+    Y_sampled = np.cumsum(values)
+
+    phase_spectrum_first = spectrum(X_sampled, Y_sampled, "freq", "phase")
+    interpolated_phase_first = sa.interpolate(phase_spectrum_first, X_continuous)
+    Y_continuous = interpolated_phase_first.Y
+    Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
+
+    # extract the pulse to estimate remaining temporal phase
+
+    phase_spectrum = spectrum(X_sampled, Y_sampled, "freq", "phase")
+    interpolated_phase = sa.interpolate(phase_spectrum, X_continuous)
+
+    interpolated_phase_zeros = interpolated_phase.zero_padding(2, inplace = False)  
     intensity.zero_padding(2)
 
-    pulse = sa.recover_pulse(interpolated_phase2, intensity)
+    pulse_not_centered = sa.recover_pulse(interpolated_phase_zeros, intensity)
+    tau = pulse_not_centered.quantile(0.5)
+
+    # remove temporal phase
+
+    Y_sampled -= X_sampled * tau * 2 * np.pi
+    Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
+    phase_spectrum_second = spectrum(X_sampled, Y_sampled, "freq", "phase")
+    interpolated_phase_second = sa.interpolate(phase_spectrum_second, X_continuous)
+    
+    # remove offset
+
+    Y_continuous = interpolated_phase_second.Y
+    Y_sampled -= Y_continuous[flr(len(Y_continuous)/2)]
+    phase_spectrum = spectrum(X_sampled, Y_sampled, "freq", "phase")
+    interpolated_phase = sa.interpolate(phase_spectrum, X_continuous)
+
+    # extract the pulse
+
+    interpolated_phase_zeros = interpolated_phase.zero_padding(2, inplace = False)  
+    pulse = sa.recover_pulse(interpolated_phase_zeros, intensity)
 
     if plot_pulse:
         min_pulse = pulse.quantile(0.25)
         max_pulse = pulse.quantile(0.75)
         delta = (max_pulse - min_pulse)*3
         sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "real")
+        print(pulse.quantile(0.5))
+
+    # plot phase
+
+    if plot_phase:
+        plt.scatter(X_sampled, Y_sampled, color = "orange", s = 20)
+        plt.plot(interpolated_phase.X, interpolated_phase.Y, color = "green")
+        plt.title("Spectral phase of original pulse")
+        plt.legend(["Phase reconstructed from SPIDER", "Interpolated phase"], bbox_to_anchor = [1, 1])
+        plt.xlabel("Frequency [THz]")
+        plt.ylabel("Spectral phase [rad]")
+        plt.grid()
+        plt.show()
 
     # return what's needed
 
