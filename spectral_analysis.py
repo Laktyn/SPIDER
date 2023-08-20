@@ -729,8 +729,13 @@ def chirp_r2(phase_spectrum, fiber_length, plot = False):
     if plot:
         reality = sa.spectrum(phase_spectrum.X.copy(), Y_real, x_type = "freq", y_type = "phase")
         prediction = sa.spectrum(phase_spectrum.X.copy(), Y_pred, x_type = "freq", y_type = "phase")
+
+        if np.mean(reality.Y) < 0:
+            reality.Y *= -1
+            prediction.Y *= -1
+
         sa.compare_plots([reality, prediction], 
-                         title = "Experimental and model chirp phase for fiber of length {}\nR^2 score equal to {}".format(fiber_length, round(score, 3)),
+                         title = "Experimental and model chirp phase for fiber of {}m\nR-squared score equal to {}".format(fiber_length, round(score, 3)),
                          legend = ["Experiment", "Model"],
                          colors = ["darkorange", "darkgreen"])
     return score
@@ -1268,25 +1273,32 @@ def spider(phase_spectrum,
 
     ARGUMENTS:
 
-    phase_spectrum - spectrum with interference pattern created in a SPIDER setup. I should be either spectrum with wavelength or frequency in X-column OR path of .csv file with that data.
+    phase_spectrum - spectrum with interference pattern created in a SPIDER setup. 
+        It should be either spectrum object with wavelength or frequency in X-column OR path of .csv file with that data.
 
     temporal_spectrum - analogous to phase_spectrum, but measured with EOPM off.
 
-    shear - spectral shear applied by EOPM given in frequency units (default THz). If \"None\", then shear is estimated using fourier filtering.
+    shear - spectral shear applied by EOPM given in frequency units (default THz). 
+        If \"None\", then shear is estimated using fourier filtering.
 
-    intensity_spectrum - amplitude of initial not interfered pulse. Similar as "phase_spectrum" it might be either spectrum oo pathname. If "None", then its approximation derived from SPIDER algorithm is used.  
+    intensity_spectrum - amplitude of initial not interfered pulse. Similar as "phase_spectrum" it might be either a spectrum object or pathname. 
+        If "None", then its approximation derived from SPIDER algorithm is used.  
     
-    phase_borders - specify range of frequencies (in THz), where you want to find spectral phase. If to big, boundary effects may appear. If "None", the borders are estimated by calculating quantiles of intensity.
+    phase_borders - specify range of frequencies (in THz), where you want to find spectral phase. 
+        If to big, boundary effects may appear. If "None", the borders are estimated by calculating quantiles of intensity.
 
-    what_to_return - if None, then RETURNS nothing. If "pulse", then RETURNS spectrum with reconstructed pulse. If "phase", then RETURNS tuple with two spectra - phase and interpolated phase.
+    what_to_return - if None, then RETURNS nothing. If "pulse", then RETURNS spectrum with reconstructed pulse. 
+        If "phase", then RETURNS tuple with two spectra - phase and interpolated phase.
 
-    smoothing_period - if None, nothing happens. Otherwise the phase difference is smoothed by taking a moving average within an interval of smoothing_period.
+    smoothing_period - if None, nothing happens. Otherwise the phase difference is smoothed by taking 
+        a moving average within an interval of smoothing_period.
     
-    find_shear - method of finding shear. If "center of mass", then shift of center of mass between sheared and non-sheared spectrum is computed. If "least_squares", then shear is found as value of shift minimizing squared difference between spectra.
+    find_shear - method of finding shear. If "center of mass", then shift of center of mass between sheared and non-sheared spectrum is computed. 
+        If "least_squares", then shear is found as value of shift minimizing squared difference between spectra.
 
     plot_steps - if to plot all intermediate steps of the SPIDER algorithm.
 
-    plot_phase - if to plot found the spectral phase.
+    plot_phase - if to plot the found spectral phase.
 
     plot shear - if to plot the spectra used to find the shear.
 
