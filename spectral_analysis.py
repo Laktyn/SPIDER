@@ -43,6 +43,11 @@ class spectrum:
         X_copied = self.X.copy()
         Y_copied = self.Y.copy()
         return (spectrum(X_copied, Y_copied, self.x_type, self.y_type))
+    
+
+    def save(self, title):
+        data = pd.DataFrame(np.transpose(np.vstack([self.X, self.Y])))
+        data.to_csv(title, index = False)
 
 
     def wl_to_freq(self, inplace = True):
@@ -237,7 +242,7 @@ class spectrum:
             self.X = freq
             self.Y = FT_intens
             self.x_type = "freq"
-            self.calc_spacing()
+            self.spacing = self.calc_spacing()
         else:
             return spectrum(freq, FT_intens, "freq", self.y_type)
         
@@ -556,12 +561,15 @@ class spectrum:
         right = None
         peak = np.max(self.Y)
         for idx, y in enumerate(self.Y):
-            if y > peak/2:
+            if y >= peak/2:
                 left = idx
         for idx, y in enumerate(np.flip(self.Y)):
-            if y > peak/2:
+            if y >= peak/2:
                 right = self.__len__() - idx
-
+        if self.__len__() == 0:
+            raise Exception("Failed to calculate FWHM, because spectrum is empty.")
+        if self.__len__() < 5:
+            raise Exception("The spectrum consists of too little data points to calculate FWHM.")
         if left == None or right == None:
             raise Exception("Failed to calculate FWHM due to very strange error.")
         width = right-left
@@ -618,6 +626,42 @@ class spectrum:
 
         if inplace == False:
             return spectrum(self.X, new_Y, self.x_type, self.y_type)
+        
+
+    def moving_average_interior(self, period, inplace = True):
+        '''
+        Smooth the INTERIOR of the spectrum by taking moving average with \"period\" in X axis units.
+        On the beginning and ending of spectrum shorter segments are used.
+        '''
+
+        from math import floor as flr
+        import numpy as np
+
+        sup = np.max(self.Y)
+        support = self.X[self.Y >= sup/2]
+        left_border = support[0]
+        right_border = support[-1]
+        left_border_idx = np.searchsorted(self.X, left_border)
+        right_border_idx = np.searchsorted(self.X, right_border)
+
+        idx_period = flr(period/self.spacing)
+
+        new_Y = []
+        for i in range(self.__len__()):
+            if i < left_border_idx + 1 or i > right_border_idx - 1:
+                new_Y.append(self.Y[i])
+                continue
+            smooth_range = np.min([idx_period, 2*np.abs(left_border_idx - i), 2*np.abs(right_border_idx - i)])
+            left = np.max([i - flr(smooth_range/2), 0])
+            right = np.min([i + flr(smooth_range/2), self.__len__() - 1])
+            new_Y.append(np.mean(self.Y[left:right]))
+        new_Y = np.array(new_Y)
+
+        if inplace == True:
+            self.Y = new_Y
+
+        if inplace == False:
+            return spectrum(self.X, new_Y, self.x_type, self.y_type)
 
 
 
@@ -627,12 +671,12 @@ class spectrum:
 
 
 
-def load_csv(filename, x_type = "wl", y_type = "intensity"):
+def load_csv(filename, x_type = "wl", y_type = "intensity", rows_to_skip = 2):
     '''
     Load CSV file to a spectrum class. Spectrum has on default wavelengths on X axis and intensity on Y axis.
     '''
     import pandas as pd
-    spectr = pd.read_csv(filename, skiprows = 2)
+    spectr = pd.read_csv(filename, skiprows = rows_to_skip)
     return spectrum(spectr.values[:, 0], spectr.values[:, 1], x_type = x_type, y_type = y_type)
 
 
@@ -682,7 +726,7 @@ def fit_fiber_length(phase_spectrum):
     def chirp_phase(frequency, centre, fiber_length):
         c = 299792458 
         l_0 = c/(centre*1e3)
-        D_l = 17
+        D_l = 20
         omega = frequency*2*np.pi
         omega_mean = centre*2*np.pi
         return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
@@ -714,7 +758,7 @@ def chirp_r2(phase_spectrum, fiber_length, plot = False):
     def chirp_phase(frequency, centre):
         c = 299792458 
         l_0 = c/(centre*1e3)
-        D_l = 17
+        D_l = 20
         omega = frequency*2*np.pi
         omega_mean = centre*2*np.pi
         return sign*l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
@@ -735,7 +779,7 @@ def chirp_r2(phase_spectrum, fiber_length, plot = False):
             prediction.Y *= -1
 
         sa.compare_plots([reality, prediction], 
-                         title = "Experimental and model chirp phase for fiber of {}m\nR-squared score equal to {}".format(fiber_length, round(score, 3)),
+                         title = "Experimental and model chirp phase for fiber of {}m\nR-squared value equal to {}".format(fiber_length, round(score, 3)),
                          legend = ["Experiment", "Model"],
                          colors = ["darkorange", "darkgreen"])
     return score
@@ -856,13 +900,13 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
     if spectrum_safe.y_type == "intensity":
         plt.ylabel("Intensity")    
     if spectrum_safe.x_type == "wl":
-        plt.xlabel("Wavelength [nm]")
+        plt.xlabel("Wavelength (nm)")
         unit = "nm"
     if spectrum_safe.x_type == "freq":
-        plt.xlabel("Frequency [THz]")
+        plt.xlabel("Frequency (THz)")
         unit = "THz"
     if spectrum_safe.x_type == "time":
-        plt.xlabel("Time [ps]")
+        plt.xlabel("Time (ps)")
         unit = "ps"
 
     # quick stats
@@ -943,13 +987,13 @@ def compare_plots(spectra, title = "Spectra", legend = None, colors = None, star
     if spectra[0].y_type == "int":
         plt.ylabel("Intensity")
     if spectra[0].y_type == "phase":
-        plt.ylabel("Spectral phase [rad]")    
+        plt.ylabel("Spectral phase (rad)")    
     if spectra[0].x_type == "wl":
-        plt.xlabel("Wavelength [nm]")
+        plt.xlabel("Wavelength (nm)")
     if spectra[0].x_type == "freq":
-        plt.xlabel("Frequency [THz]")
+        plt.xlabel("Frequency (THz)")
     if spectra[0].x_type == "time":
-        plt.xlabel("Time [ps]")
+        plt.xlabel("Time (ps)")
     if isinstance(legend, list):
         plt.legend(legend, bbox_to_anchor = [1, 1])
     plt.show()       
@@ -971,7 +1015,9 @@ def recover_pulse(phase_spectrum, intensity_spectrum):
         complex_Y[i] *= np.exp(1j*phase_spectrum.Y[i])
 
     pulse_spectrum = spectrum(phase_spectrum.X.copy(), complex_Y, "freq", "intensity")
-    return pulse_spectrum.fourier(inplace = False)
+    pulse_spectrum.fourier()
+    pulse_spectrum.Y = 2*np.real(pulse_spectrum.Y)
+    return pulse_spectrum
 
 
 def find_shift(spectrum_1, spectrum_2):
@@ -1066,6 +1112,47 @@ def chirp_phase(bandwidth, centre, fiber_length):
     omega = X*2*np.pi
     omega_mean = centre*2*np.pi
     return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
+
+
+def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, how = "com", plot = False):
+    '''
+    Find shear between two spectra given names of two csv files with those spectral, optional "smoothing period". 
+    You can find the shift by fitting it (how = "fit") or by calculating the shift between centers of mass (how = "com").
+    '''
+
+    import spectral_analysis as sa
+    import numpy as np
+
+    if how != "com" and how != "fit":
+        raise Exception("\"how\" must be equal either to \"com\" or \"fit\".")
+
+    sheared = sa.load_csv(sheared_spectrum)
+    not_sheared = sa.load_csv(not_sheared_spectrum)
+
+    sheared.wl_to_freq()
+    not_sheared.wl_to_freq()
+    sheared.constant_spacing()
+    not_sheared.constant_spacing()
+
+    if smoothing_period != None:
+        sheared.moving_average_interior(smoothing_period)
+        not_sheared.moving_average_interior(smoothing_period)
+
+    if how == "com":
+        shear = np.abs(sheared.quantile(0.5)-not_sheared.quantile(0.5))
+    elif how == "fit":
+        shear = np.abs(sa.find_shift(sheared, not_sheared))
+
+    if plot:    
+        sa.compare_plots([sheared, not_sheared], 
+                         legend = ["Sheared spectrum", "Not sheared spectrum"], 
+                         title = "Shear = {} THz".format(round(shear, 5)))
+        sa.compare_plots([sheared.shift(shear, inplace = False), not_sheared], 
+                         legend = ["Resheared sheared spectrum", "Not sheared spectrum"], 
+                         title = "Shifting sheared spectrum to the \"zero\" position".format(round(shear, 5)),
+                         colors = ["green", "orange"])
+    
+    return shear
 
 
 
@@ -1288,7 +1375,8 @@ def spider(phase_spectrum,
         If to big, boundary effects may appear. If "None", the borders are estimated by calculating quantiles of intensity.
 
     what_to_return - if None, then RETURNS nothing. If "pulse", then RETURNS spectrum with reconstructed pulse. 
-        If "phase", then RETURNS tuple with two spectra - phase and interpolated phase.
+        If "phase", then RETURNS tuple with two spectra - phase and interpolated phase. If "phase_diff", then RETURNS the spectrum with
+        spectral phase difference. If "FT", then RETURNS the spectrum withFourier transform of the OSA spectrum.
 
     smoothing_period - if None, nothing happens. Otherwise the phase difference is smoothed by taking 
         a moving average within an interval of smoothing_period.
@@ -1616,8 +1704,9 @@ def spider(phase_spectrum,
         min_pulse = pulse.quantile(0.25)
         max_pulse = pulse.quantile(0.75)
         delta = (max_pulse - min_pulse)*3
+        #pulse.X = pulse.X[::2]
+        #pulse.Y = pulse.Y[::2]
         sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "real")
-        print(pulse.quantile(0.5))
 
     # return what's needed
 
