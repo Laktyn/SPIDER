@@ -12,15 +12,15 @@ import matplotlib.pyplot as plt
 class spectrum:
     '''
     Class of an optical spectrum. It stores values of the \"X\" axis (wavelength, frequency or time) and the \"Y\" axis
-    (intensity or phase) as 1D numpy arrays. Several standard transforms and basic statistics are implemented as class methods.
+    (intensity, phase or complex amplitude) as 1D numpy arrays. Several standard transforms and basic statistics are implemented as class methods.
     '''
 
-    def __init__(self, X, Y, x_type, y_type):
+    def __init__(self, X, Y, x_type = "freq", y_type = "intensity"):
 
         if x_type not in ["time", "freq", "wl"]:
             raise Exception("x_type must be either \"time\" or \"freq\" or \"wl\".")
-        if y_type not in ["phase", "intensity"]:
-            raise Exception("y_type must be either \"phase\" or \"intensity\".")
+        if y_type not in ["phase", "intensity", "complex_ampl"]:
+            raise Exception("y_type must be either \"phase\", \"intensity\" or \"complex_ampl\".")
         if len(X) != len(Y):
             raise Exception("X and Y axis must be of the same size.")
 
@@ -192,15 +192,14 @@ class spectrum:
         # Exceptions
 
         if self.x_type == "wl":
-            raise Exception("Before applying Fourier Transform, transform spectrum from wavelength to frequency domain.")
+            raise Exception("Before applying Fourier transform, transform spectrum from wavelength to frequency domain.")
         if self.x_type == "time":
-            raise Exception("Sticking to the convention: use Inverse Fourier Transform.")
+            print("WARNING: Sticking to the convention you are encouraged to use the inverse Fourier transform.")
 
         # Fourier Transform
 
         FT_intens = fft(self.Y, norm = "ortho")
         FT_intens = fftshift(FT_intens)
-
         time = fftfreq(self.__len__(), self.spacing)
         time = fftshift(time)
 
@@ -215,13 +214,13 @@ class spectrum:
 
     def inv_fourier(self, inplace = True):
         '''
-        Performs Inverse Fourier Transform from \"time\" to \"frequency\" domain.
+        Performs inverse Fourier transform from \"time\" to \"frequency\" domain.
         '''
 
         from scipy.fft import ifft, fftfreq, ifftshift, fftshift
 
         if self.x_type != "time":
-            raise Exception("Sticking to the convention: use Fourier Transform (not Inverse).")
+            print("WARNING: Sticking to the convention you are encouraged to use the Fourier transform (instead for the inverse one).")
 
         # prepare input
 
@@ -717,11 +716,39 @@ def interpolate(old_spectrum, new_X):
     return spectrum(new_X, new_Y, old_spectrum.x_type, old_spectrum.y_type)
 
 
-def fit_fiber_length(phase_spectrum):
+def create_complex_spectrum(intensity_spectrum, phase_spectrum, extrapolate = False):
+    '''
+    Given the intensity spectrum and the phase spectrum compute the complex amplitude spectrum. With \"extrapolate = False\" the spectral phase of the spectrum
+    is zeroed outside the area with the well-known phase.
+    '''
+
+    import spectral_analysis as sa
+    import numpy as np
+
+    if intensity_spectrum.y_type != "intensity":
+        print("WARNING: Are you sure that the \"intensity_spectrum\" carries the information about intensity?")
+    if phase_spectrum.y_type != "phase":
+        print("WARNING: Are you sure that the \"phase_spectrum\" carries the information about phase?")
+
+    support_left = np.searchsorted(intensity_spectrum.X, phase_spectrum.X[0])
+    support_right = np.searchsorted(intensity_spectrum.X, phase_spectrum.X[-1])
+    new_phase = sa.interpolate(phase_spectrum, intensity_spectrum.X)
+
+    if not extrapolate:
+        for i in range(len(intensity_spectrum)):
+            if i < support_left or i > support_right:
+                new_phase.Y[i] = 0
+
+    amplitude = intensity_spectrum.Y * np.exp(1j*new_phase.Y)
+    
+    return sa.spectrum(intensity_spectrum.X, amplitude, intensity_spectrum.x_type, "complex_ampl")
+
+def fit_fiber_length(phase_spectrum, plot = False):
     '''
     Fit parabolic spectral phase to the given spectrum and return the length of chirping fiber corresponding to that phase.
     '''
     from scipy.optimize import curve_fit
+    import spectral_analysis as sa
 
     def chirp_phase(frequency, centre, fiber_length):
         c = 299792458 
@@ -731,7 +758,13 @@ def fit_fiber_length(phase_spectrum):
         omega_mean = centre*2*np.pi
         return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
 
-    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [80, 192])
+    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [192, 100], bounds = [[150, 40],[300, 300]])
+
+    if plot:
+        new_X = phase_spectrum.X.copy()
+        fit_phase = sa.spectrum(new_X, chirp_phase(new_X, param[0], param[1]), x_type = "freq", y_type = "phase")
+        sa.compare_plots([phase_spectrum, fit_phase], legend = ["Original spectrum", "Phase corresponding to fiber of {}m".format(round(param[1]))])
+
     return np.abs(param[1])
     
 
@@ -821,30 +854,32 @@ def find_maxima(fringes_spectrum):
     return sa.spectrum(np.array(X), np.array(Y), fringes_spectrum.x_type, fringes_spectrum.y_type)
 
 
-def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs", start = None, end = None):
+def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot = "abs", start = None, end = None, save = False):
     '''
     Fast spectrum plotting using matplotlib.pyplot library.
 
     ARGUMENTS:
 
-    spectrum - DataFrame with Intensity on Y axis.
+    spectrum - the spectrum object class to be plotted.
 
     color - color of the plot.
 
     title - title of the plot.
 
+    what_to_plot - either \"abs\", \"imag\", \"real\", \"complex\" or \"trigonometric\". In the last two cases two curves are plotted.
+
     start - starting point (in X-axis units) of a area to be shown on plot. If \"min\", then plot starts with lowest X-value in all spectra.
 
     end - ending point (in X-axis units) of a area to be shown on plot. If \"max\", then plot ends with highest X-value in all spectra.
 
-    what_to_plot - either \"abs\" or \"imag\" or \"real\".
+    save - if to save the plot in the program's directory. The title of the plot will be by default used as the filename.
     '''
 
     import numpy as np
     import matplotlib.pyplot as plt
     from math import floor, log10
 
-    spectrum_safe = spectrum.copy()
+    spectrum_safe = spectrum_safe.copy()
     
     # simple function to round to significant digits
 
@@ -853,8 +888,8 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
 
     # invalid arguments
     
-    if what_to_plot not in ("abs", "imag", "real"):
-        raise Exception("Input \"what_to_plot\" not defined.")
+    if what_to_plot not in ("abs", "imag", "real", "complex", "trigonometric"):
+        raise Exception("Argument \"what_to_plot\" must be either \"abs\", \"imag\", \"real\", \"complex\" or \"trigonometric\".")
 
     # if we dont want to plot whole spectrum
 
@@ -889,13 +924,44 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
     # start to plot
 
     f, ax = plt.subplots()
-    plt.plot(spectrum_safe.X, spectrum_safe.Y, color = color)
+
+    if what_to_plot == "complex":
+        plt.plot(spectrum_safe.X, np.real(spectrum_safe.Y), color = "darkviolet")
+        plt.plot(spectrum_safe.X, np.imag(spectrum_safe.Y), color = "green")
+        plt.legend(["Real part", "Imaginary part"], bbox_to_anchor = [1, 0.17])
+
+    elif what_to_plot == "trigonometric":
+        phase = np.angle(spectrum_safe.Y)
+        intensity = np.abs(spectrum_safe.Y)
+
+        start_idx = 0
+        end_idx = len(phase) -1
+        for i in range(len(phase)):
+            if phase[i] != 0:
+                start_idx  = i
+                break
+        for i in reversed(range(len(phase))):
+            if phase[i] != 0:
+                end_idx  = i
+                break
+
+        phase = np.unwrap(phase)
+        intensity /= np.max(np.abs(intensity))  # normalize intensity with respect to phase
+        intensity *= np.max(np.abs(phase[start_idx: end_idx]))
+
+        plt.plot(spectrum_safe.X, intensity, color = "orange", alpha = 0.5)
+        plt.plot(spectrum_safe.X[start_idx: end_idx], phase[start_idx: end_idx], color = "darkviolet")
+        plt.legend(["Spectral intensity", "Spectral phase"], bbox_to_anchor = [1, 0.17])
+
+    else:
+        plt.plot(spectrum_safe.X, spectrum_safe.Y, color = color)
+        
     plt.grid()
     if to_cut:
         plt.title(title + " [only part shown]")
     else:
         plt.title(title)
-    if spectrum_safe.y_type == "phase":
+    if spectrum_safe.y_type in ["phase", "complex_ampl"] :
         plt.ylabel("Spectral phase [rad]")
     if spectrum_safe.y_type == "intensity":
         plt.ylabel("Intensity")    
@@ -918,6 +984,9 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
         plt.text(1.05, 0.85, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) + "\nFull X-axis range: {} - {} ".format(inf, sup) + unit , transform = ax.transAxes)
     else:
         plt.text(1.05, 0.9, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) , transform = ax.transAxes)
+
+    if save:
+        plt.savefig("{}.jpg".format(title))
 
     plt.show()
 
@@ -1080,7 +1149,7 @@ def ratio(vis_value):
     return X[r]
 
 
-def gaussian_pulse(bandwidth, centre, FWHM):
+def gaussian_pulse(bandwidth, centre, FWHM, x_type):
     '''
     Creates spectrum with gaussian intensity. "bandwidth" is a tuple with start and the end of the entire spectrum. 
     "centre" and "FWHM" characterize the pulse itself.
@@ -1094,6 +1163,26 @@ def gaussian_pulse(bandwidth, centre, FWHM):
     gauss = np.vectorize(gauss)
     Y = gauss(X, centre, sd)
     return sa.spectrum(X, Y, "freq", "intensity")
+
+
+def hermitian_pulse(bandwidth, centre, FWHM, x_type):
+    '''
+    Creates spectrum with 1st Hermit-Gauss intensity mode. "bandwidth" is a tuple with start and the end of the entire spectrum. 
+    "centre" and "FWHM" characterize the pulse itself.
+    '''
+    if x_type not in ["freq", "wl", "time"]:
+        raise Exception("x_type must be either \"freq\", \"nm\" or \"time\"")
+
+    import spectral_analysis as sa
+    from math import floor
+    
+    X = np.linspace(bandwidth[0], bandwidth[1], 2000)
+    sd = FWHM/2.355
+    def gauss(x, mu, std):
+        return 1/(std*np.sqrt(2*np.pi))*np.exp(-(x-mu)**2/(2*std**2))
+    gauss = np.vectorize(gauss)
+    Y = (X - X[np.searchsorted(X, centre)])*gauss(X, centre, sd)
+    return sa.spectrum(X, Y, x_type, "intensity")
 
 
 def chirp_phase(bandwidth, centre, fiber_length):
@@ -1140,14 +1229,16 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
 
     if how == "com":
         shear = np.abs(sheared.quantile(0.5)-not_sheared.quantile(0.5))
+        shear_rel = sheared.quantile(0.5)-not_sheared.quantile(0.5)
     elif how == "fit":
         shear = np.abs(sa.find_shift(sheared, not_sheared))
+        shear_rel = sa.find_shift(sheared, not_sheared)
 
     if plot:    
         sa.compare_plots([sheared, not_sheared], 
                          legend = ["Sheared spectrum", "Not sheared spectrum"], 
                          title = "Shear = {} THz".format(round(shear, 5)))
-        sa.compare_plots([sheared.shift(shear, inplace = False), not_sheared], 
+        sa.compare_plots([sheared.shift(-shear_rel, inplace = False), not_sheared], 
                          legend = ["Resheared sheared spectrum", "Not sheared spectrum"], 
                          title = "Shifting sheared spectrum to the \"zero\" position".format(round(shear, 5)),
                          colors = ["green", "orange"])
@@ -1515,8 +1606,6 @@ def spider(phase_spectrum,
 
     if plot_steps: 
         sa.plot(s_ft, title = "Filtered (absolute value)", start = -2*delay2, end = 2*delay2, what_to_plot = "abs")
-        sa.plot(s_ft, title = "Filtered (real part)", start = -2*delay2, end = 2*delay2, what_to_plot = "real")
-        sa.plot(s_ft, title = "Filtered (imaginary part)", start = -2*delay2, end = 2*delay2, what_to_plot = "imag")
 
     # let's find the shear
     
