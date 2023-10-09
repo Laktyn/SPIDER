@@ -198,7 +198,8 @@ class spectrum:
 
         # Fourier Transform
 
-        FT_intens = fft(self.Y, norm = "ortho")
+        FT_intens = fftshift(self.Y.copy())
+        FT_intens = fft(FT_intens, norm = "ortho")
         FT_intens = fftshift(FT_intens)
         time = fftfreq(self.__len__(), self.spacing)
         time = fftshift(time)
@@ -233,7 +234,7 @@ class spectrum:
         # Fourier Transform
 
         FT_intens = ifft(intens, norm = "ortho")
-
+        FT_intens = ifftshift(FT_intens)
         freq = fftfreq(self.__len__(), self.spacing)
         freq = fftshift(freq)
 
@@ -753,7 +754,7 @@ def create_complex_spectrum(intensity_spectrum, phase_spectrum, extrapolate = Fa
     
     return sa.spectrum(intensity_spectrum.X, amplitude, intensity_spectrum.x_type, "complex_ampl")
 
-def fit_fiber_length(phase_spectrum, plot = False):
+def fit_fiber_length(phase_spectrum, plot = False, guessed_length = 80):
     '''
     Fit parabolic spectral phase to the given spectrum and return the length of chirping fiber corresponding to that phase.
     '''
@@ -768,7 +769,7 @@ def fit_fiber_length(phase_spectrum, plot = False):
         omega_mean = centre*2*np.pi
         return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
 
-    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [192, 100], bounds = [[150, 40],[300, 300]])
+    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [192, guessed_length], bounds = [[150, 30],[300, 300]])
 
     if plot:
         new_X = phase_spectrum.X.copy()
@@ -1166,7 +1167,7 @@ def gaussian_pulse(bandwidth, centre, FWHM, x_type = "freq", num = 1000):
     '''
 
     import spectral_analysis as sa
-    X = np.linspace(bandwidth[0], bandwidth[1], 1000)
+    X = np.linspace(bandwidth[0], bandwidth[1], num = num)
     sd = FWHM/2.355
     def gauss(x, mu, std):
         return 1/(std*np.sqrt(2*np.pi))*np.exp(-(x-mu)**2/(2*std**2))
@@ -1197,7 +1198,7 @@ def hermitian_pulse(pol_num, bandwidth, centre, FWHM, num = 1000, x_type = "freq
     def gauss(x, mu, std):
         return 1/(std*np.sqrt(2*np.pi))*np.exp(-(x-mu)**2/(2*std**2))
     
-    X = np.linspace(bandwidth[0], bandwidth[1], num)
+    X = np.linspace(bandwidth[0], bandwidth[1], num = num)
     sd = FWHM/2.355
     Y_gauss = gauss(X, centre, sd)
     Y_hermite = hermite_pol(2*(X-centre)/FWHM)
