@@ -754,6 +754,7 @@ def create_complex_spectrum(intensity_spectrum, phase_spectrum, extrapolate = Fa
     
     return sa.spectrum(intensity_spectrum.X, amplitude, intensity_spectrum.x_type, "complex_ampl")
 
+
 def fit_fiber_length(phase_spectrum, plot = False, guessed_length = 80):
     '''
     Fit parabolic spectral phase to the given spectrum and return the length of chirping fiber corresponding to that phase.
@@ -922,7 +923,7 @@ def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot =
         to_cut = True
 
     spectrum_safe.cut(s, e, how = "index") 
-    
+
     # what do we want to have on Y axis
 
     if what_to_plot == "abs":
@@ -966,7 +967,7 @@ def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot =
 
     else:
         plt.plot(spectrum_safe.X, spectrum_safe.Y, color = color)
-        
+     
     plt.grid()
     if to_cut:
         plt.title(title + " [only part shown]")
@@ -1228,17 +1229,73 @@ def chirp_phase(bandwidth, centre, fiber_length):
     return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
 
 
-def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, how = "com", plot = False):
+def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0.3, sampl_num = 500):
+
+    sup_sheared = np.max(sheared_spectrum.Y)
+    sup_not_sheared = np.max(not_sheared_spectrum.Y)
+
+    # left slope, sheared spectrum
+
+    left_s = []
+    for i in np.linspace(low, high, sampl_num):
+        for k in range(len(sheared_spectrum)):
+            if sheared_spectrum.Y[k] < i*sup_sheared:
+                continue
+            else: 
+                left_s.append(sheared_spectrum.X[k])
+                break
+
+    # left slope, not sheared spectrum
+
+    left_ns = []
+    for i in np.linspace(low, high, sampl_num):
+        for k in range(len(not_sheared_spectrum)):
+            if not_sheared_spectrum.Y[k] < i*sup_not_sheared:
+                continue
+            else: 
+                left_ns.append(not_sheared_spectrum.X[k])
+                break
+
+    # right slope, sheared spectrum
+
+    right_s = []
+    for i in np.linspace(low, high, sampl_num):
+        for k in reversed(range(len(sheared_spectrum))):
+            if sheared_spectrum.Y[k] < i*sup_sheared:
+                continue
+            else: 
+                right_s.append(sheared_spectrum.X[k])
+                break
+
+    # right slope, not sheared spectrum
+
+    right_ns = []
+    for i in np.linspace(low, high, sampl_num):
+        for k in reversed(range(len(not_sheared_spectrum))):
+            if not_sheared_spectrum.Y[k] < i*sup_not_sheared:
+                continue
+            else: 
+                right_ns.append(not_sheared_spectrum.X[k])
+                break
+
+    left_shift = np.mean(np.array(left_s)-np.array(left_ns))
+    right_shift = np.mean(np.array(right_s)-np.array(right_ns))
+
+    return (left_shift+right_shift)/2
+
+
+def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, how = "slope", plot = False):
     '''
     Find shear between two spectra given names of two csv files with those spectral, optional "smoothing period". 
-    You can find the shift by fitting it (how = "fit") or by calculating the shift between centers of mass (how = "com").
+    You can find the shift by fitting it (how = "fit"), by calculating the shift between centers of mass (how = "com"),
+    or by computing the shift of the slope (how = "slope").
     '''
 
     import spectral_analysis as sa
     import numpy as np
 
-    if how != "com" and how != "fit":
-        raise Exception("\"how\" must be equal either to \"com\" or \"fit\".")
+    if how not in ["com", "fit", "slope"]:
+        raise Exception("\"how\" must be equal either to \"com\",\"fit\" or \"slope\".")
 
     sheared = sa.load_csv(sheared_spectrum)
     not_sheared = sa.load_csv(not_sheared_spectrum)
@@ -1253,17 +1310,19 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
         not_sheared.moving_average_interior(smoothing_period)
 
     if how == "com":
-        shear = np.abs(sheared.quantile(0.5)-not_sheared.quantile(0.5))
-        shear_rel = sheared.quantile(0.5)-not_sheared.quantile(0.5)
+        shear = sheared.quantile(0.5)-not_sheared.quantile(0.5)
+
     elif how == "fit":
-        shear = np.abs(sa.find_shift(sheared, not_sheared))
-        shear_rel = sa.find_shift(sheared, not_sheared)
+        shear = sa.find_shift(sheared, not_sheared)
+
+    elif how == "slope":
+        shear = sa.find_slope_shift(sheared, not_sheared)
 
     if plot:    
         sa.compare_plots([sheared, not_sheared], 
                          legend = ["Sheared spectrum", "Not sheared spectrum"], 
                          title = "Shear = {} THz".format(round(shear, 5)))
-        sa.compare_plots([sheared.shift(-shear_rel, inplace = False), not_sheared], 
+        sa.compare_plots([sheared.shift(-shear, inplace = False), not_sheared], 
                          legend = ["Resheared sheared spectrum", "Not sheared spectrum"], 
                          title = "Shifting sheared spectrum to the \"zero\" position".format(round(shear, 5)),
                          colors = ["green", "orange"])
@@ -1273,12 +1332,12 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
 
 
 #                   ---------
-#                   RAY CLASS
+#                   BEAM CLASS
 #                   ---------
 
 
 
-class ray:
+class beam:
 
     def __init__(self, vertical_polarization, horizontal_polarization):
         self.ver = vertical_polarization
@@ -1328,12 +1387,12 @@ class ray:
         if polarization == "hor": spectr = self.ver.copy()
         l_0 = 1560
         c = 3*1e8
-        D_l = 17
+        D_l = 20
         omega = spectr.X*2*np.pi
         omega_mean = spectr.quantile(1/2)
         phase = l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
-        if polarization == "ver": self.ver.Y *= np.exp(1j*phase)
-        if polarization == "hor": self.hor.Y *= np.exp(1j*phase)
+        if polarization == "ver": self.ver.Y = self.ver.Y*np.exp(1j*phase)
+        if polarization == "hor": self.hor.Y = self.hor.Y*np.exp(1j*phase)
 
 
     def shear(self, shift, polarization):
@@ -1498,7 +1557,8 @@ def spider(phase_spectrum,
         a moving average within an interval of smoothing_period.
     
     find_shear - method of finding shear. If "center of mass", then shift of center of mass between sheared and non-sheared spectrum is computed. 
-        If "least_squares", then shear is found as value of shift minimizing squared difference between spectra.
+        If "least_squares", then shear is found as value of shift minimizing squared difference between spectra. If "slope", then finds the first argument,
+        where spectrum reaches 0.1 of maximum, 0.11 of maximum, etc. Shear is estimated as mean of shifts of these points.
 
     plot_steps - if to plot all intermediate steps of the SPIDER algorithm.
 
@@ -1539,8 +1599,8 @@ def spider(phase_spectrum,
 
     # zero padding
 
-    t_spectrum.zero_padding(1)
-    p_spectrum.zero_padding(1)
+    t_spectrum.zero_padding(3)
+    p_spectrum.zero_padding(3)
 
     # plot OSA
 
@@ -1661,22 +1721,26 @@ def spider(phase_spectrum,
             shear = sa.find_shift(s_shear, s_shear_t)
         elif find_shear == "center of mass":
             shear = s_shear.quantile(1/2) - s_shear_t.quantile(1/2)
-
+        elif find_shear == "slope":
+            shear = sa.find_slope_shift(s_shear, s_shear_t)
+        else:
+            raise Exception("\"find_shear\" must be either \"least squares\", \"center of mass\" or \"slope\".")
+        
         shear = np.abs(shear)
         
         if shear == 0:
             raise Exception("Failed to find non zero shear.")
         if plot_shear:
             sa.compare_plots([s_shear, s_shear_t], 
-                             start = -0.4, 
-                             end = 0.4, 
+                             start = 1.5*s_shear.quantile(0.05), 
+                             end = 1.5*s_shear.quantile(0.95), 
                              abs = True, 
                              title = "Shear of {} THz".format(round(shear,5)),
                              legend = ["Sheared", "Not sheared"])
 
-    integrate_interval = flr(shear/(s_freq_for_later.spacing))
+    integrate_interval = flr(np.abs(shear)/(s_freq_for_later.spacing))
     mean = np.mean(s_freq_for_later.X)
-        
+
     # inverse fourier
 
     s_ift = s_ft.inv_fourier(inplace = False)        # spider
@@ -1724,7 +1788,7 @@ def spider(phase_spectrum,
 
     # prepare data to plot
     
-    X_sampled += mean + shear
+    X_sampled += mean
     X_continuous = X_sampled.copy()
 
     # plot phase difference
@@ -1775,8 +1839,14 @@ def spider(phase_spectrum,
     integration_start = flr((len(X_sampled) % integrate_interval)/2) # we want to extrapolate equally on both sides
 
     X_sampled = X_sampled[integration_start::integrate_interval]
+
     values = values[integration_start::integrate_interval]
     Y_sampled = np.cumsum(values)
+
+    if shear < 0: 
+        X_sampled -= shear
+        X_continuous -= shear
+        Y_sampled *= -1
 
     phase_spectrum_first = spectrum(X_sampled, Y_sampled, "freq", "phase")
 
@@ -1795,7 +1865,7 @@ def spider(phase_spectrum,
     # proper interpolation
 
     interpolated_phase = sa.interpolate(phase_spectrum, X_continuous)
-    interpolated_phase_zeros = interpolated_phase.zero_padding(2, inplace = False)  
+    interpolated_phase_zeros = interpolated_phase.zero_padding(3, inplace = False)  
 
     # plot phase
 
@@ -1811,15 +1881,14 @@ def spider(phase_spectrum,
 
     # extract the pulse
 
-    intensity.zero_padding(2)
+    intensity.zero_padding(3)
     pulse = sa.recover_pulse(interpolated_phase_zeros, intensity)
 
     if plot_pulse:
         min_pulse = pulse.quantile(0.25)
         max_pulse = pulse.quantile(0.75)
         delta = (max_pulse - min_pulse)*3
-        #pulse.X = pulse.X[::2]
-        #pulse.Y = pulse.Y[::2]
+
         sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "real")
 
     # return what's needed
