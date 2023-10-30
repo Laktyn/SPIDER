@@ -761,6 +761,7 @@ def fit_fiber_length(phase_spectrum, plot = False, guessed_length = 80):
     '''
     from scipy.optimize import curve_fit
     import spectral_analysis as sa
+    import numpy as np
 
     def chirp_phase(frequency, centre, fiber_length):
         c = 299792458 
@@ -830,6 +831,194 @@ def chirp_r2(phase_spectrum, fiber_length, plot = False):
     return score
 
 
+def fit_rect(spectr, output = "params", fixed_area = True, slope = False, slope_factor = 0.1):
+    '''
+    Fit a rectangle to the given spectrum. If output = \"params\" then tuple (start, end, height) characterizing the shape of rectangle is returned.
+    If output = \"spectrum\" returns fitted rectangle as a spectrum class object. If fixed_area = True, than fitted spectrum has the same area as the initial.
+    If slope = True, than not a rectangle but a trapeze is fitted. The slope of its sides is the greater, the greater slope_factor is.
+    '''
+    from scipy.optimize import curve_fit
+    from spectral_analysis import spectrum
+    import numpy as np
+
+    def rect(x, start, end, height):
+        if isinstance(x, type(np.array([]))):
+            y = x.copy()
+            delta = (end-start)*slope_factor
+            for i in range(len(x)):
+                if x[i] <= start:
+                    y[i] = 0
+                if x[i] >= end:
+                    y[i] = 0
+                if start + delta <= x[i] <= end - delta:
+                    y[i] = height
+                if start < x[i] < start + delta:
+                    if slope:
+                        y[i] = (0*(np.abs(x[i] - start - delta)) + height*(np.abs(x[i] - start)))/delta
+                    else:
+                        y[i] = height
+                if end - delta < x[i] < end:
+                    if slope:
+                        y[i] = (height*(np.abs(x[i] - end)) + 0*(np.abs(x[i] - end + delta)))/delta
+                    else:
+                        y[i] = height
+            return y
+        else:
+            print("You gave me a scalar. Is it good?")
+            if x < start or x > end:
+                return 0
+            else:
+                return height
+            
+    sum = np.sum(spectr.Y)/len(spectr)*(spectr.X[-1]-spectr.X[0])
+            
+    def rect_fixed(x, start, end):
+        return rect(x = x, start = start, end = end, height = sum/(end-start))
+
+    if fixed_area:
+        params, cov = curve_fit(f = rect_fixed, 
+                        xdata = spectr.X, 
+                        ydata = np.abs(spectr.Y),
+                        p0 = [spectr.quantile(0.1), spectr.quantile(0.9)],
+                        bounds = [[spectr.quantile(0.001), spectr.quantile(0.5)], [spectr.quantile(0.5), spectr.quantile(0.999)]])
+        
+        if output == "params":
+            return params[0], params[1], sum/(params[1]-params[0])
+        elif output == "spectrum":
+            new_X = spectr.X.copy()
+            new_Y = rect_fixed(new_X, params[0], params[1])
+            return spectrum(new_X, new_Y, spectr.x_type, spectr.y_type)
+        else:
+            raise Exception("output must be either \"params\" or \"spectrum\"")
+    else:
+        params, cov = curve_fit(f = rect, 
+                            xdata = spectr.X, 
+                            ydata = np.abs(spectr.Y),
+                            p0 = [spectr.quantile(0.1), spectr.quantile(0.9), 0.8*np.max(spectr.Y)],
+                            bounds = [[spectr.quantile(0.001), spectr.quantile(0.5), 0.2*np.max(spectr.Y)], [spectr.quantile(0.5), spectr.quantile(0.999), np.max(spectr.Y)]])
+        
+        if output == "params":
+            return params[0], params[1], params[2]
+        elif output == "spectrum":
+            new_X = spectr.X.copy()
+            new_Y = rect(new_X, params[0], params[1], params[2])
+            return spectrum(new_X, new_Y, spectr.x_type, spectr.y_type)
+        else:
+            raise Exception("output must be either \"params\" or \"spectrum\"")
+
+
+def fit_rect_smart(spectr, output = "params"):
+    '''
+    With functions like that I impress myself. output must be either \"params\" - then a tuple (a, b, height) is returned -
+    or \"spectrum\", resulting in returning a fitted rectangle spectrum
+    '''
+    import numpy as np
+    from math import floor
+    import spectral_analysis as sa
+
+    # we limit ourselves to the significant part of spectrum
+
+    start = spectr.quantile(0.01)
+    end = spectr.quantile(0.99)
+    mid = spectr.quantile(0.5)
+
+    start_idx = np.searchsorted(spectr.X, start)
+    end_idx = np.searchsorted(spectr.X, end)
+    mid_idx = np.searchsorted(spectr.X, mid)
+
+    s_safe = spectr.copy()
+    left_axis = s_safe.Y[start_idx: mid_idx].copy()
+    right_axis = s_safe.Y[mid_idx: end_idx].copy()
+
+    # we will compute the left and right side od rectangle in a smart wat, but we need to use a brute force to compute the height
+    
+    height_sample_rate = 1000
+    delta = np.mean(spectr.cut(start, end, inplace = False).Y)/height_sample_rate
+
+    losses_l = []
+    losses_r = []
+    loss_idx_l = []
+    loss_idx_r = []
+
+    # the loop over heights
+
+    for i in range(height_sample_rate-2):
+        height = np.mean(spectr.cut(start, end, inplace = False).Y) -height_sample_rate/2*delta + i*delta
+
+        # the absolute error if we fit at given place the rectangle
+
+        left_axis_if_big = np.abs(left_axis.copy()-height)
+        right_axis_if_big = np.abs(right_axis.copy()-height)
+
+        # the absolute error if we fit at given place the zeroes
+
+        left_axis_if_small = np.abs(left_axis.copy())
+        right_axis_if_small = np.abs(right_axis.copy())
+
+        # basically we integrate the losses
+
+        left_axis_if_big = np.cumsum(np.flip(left_axis_if_big))
+        right_axis_if_big = np.cumsum(right_axis_if_big)
+        left_axis_if_small = np.cumsum(left_axis_if_small)
+        right_axis_if_small = np.cumsum(np.flip(right_axis_if_small))
+
+        # and sum them up so that at the n-th index there is a loss of setting the rectangle side there
+        # left and right sides are computed independently
+
+        left_axis_loss = np.flip(left_axis_if_big) + left_axis_if_small
+        right_axis_loss = right_axis_if_big + np.flip(right_axis_if_small)
+
+        # cool looking loss spectrum
+
+        Y = np.concatenate([left_axis_loss, right_axis_loss])
+        loss_spectrum = sa.spectrum(spectr.X[start_idx:end_idx], Y, spectr.x_type, spectr.y_type)
+
+        # now, for each side, we find height minimizing the loss at best
+
+        losses_l.append(np.min(left_axis_loss))
+        losses_r.append(np.min(right_axis_loss))
+        loss_idx_l.append(np.argmin(left_axis_loss))
+        loss_idx_r.append(np.argmin(right_axis_loss))
+
+    left_iter_min = np.argmin(losses_l)
+    right_iter_min = np.argmin(losses_r)
+
+    # height estimation
+
+    final_height = np.mean([left_iter_min, right_iter_min])*delta + np.mean(spectr.cut(start, end, inplace = False).Y) +(-height_sample_rate/2*delta)
+
+    # and sides calculation
+
+    left_idx = loss_idx_l[left_iter_min] + start_idx
+    right_idx = mid_idx + loss_idx_r[right_iter_min]
+    left_side = spectr.X[left_idx]
+    right_side = spectr.X[right_idx]
+
+    def rect(x, start, end, height):
+        y = x.copy()
+        for i in range(len(x)):
+            if x[i] < start:
+                y[i] = 0
+            elif x[i] > end:
+                y[i] = 0
+            else:
+                y[i] = height
+        return y
+
+    # returns
+
+    if output == "params":
+        return left_side, right_side, final_height
+    
+    elif output == "spectrum":
+        new_X = spectr.X.copy()
+        new_Y = rect(new_X, left_side, right_side, final_height)
+        return sa.spectrum(new_X, new_Y, spectr.x_type, spectr.y_type)
+    
+    else:
+        raise Exception("output must be either \"params\" or \"spectrum\"")
+
+
 def find_minima(fringes_spectrum):
     '''
     Find minima of interference fringes by looking at nearest neighbors. Spectrum with minima is returned.
@@ -853,6 +1042,7 @@ def find_maxima(fringes_spectrum):
     Find maxima of interference fringes by looking at nearest neighbors. Spectrum with maxima is returned.
     '''
     import spectral_analysis as sa
+    import numpy as np
 
     X = []
     Y = []
@@ -1286,16 +1476,16 @@ def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0
 
 def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, how = "slope", plot = False):
     '''
-    Find shear between two spectra given names of two csv files with those spectral, optional "smoothing period". 
-    You can find the shift by fitting it (how = "fit"), by calculating the shift between centers of mass (how = "com"),
-    or by computing the shift of the slope (how = "slope").
+    Find shear between two spectra given names of two csv files with those spectral, optional \"smoothing period\". 
+    You can find the shift by fitting it (how = \"fit\"), by calculating the shift between centers of mass (how = \"com\"),
+    by computing the shift of the slope (how = \"slope\") or by calculating the shift of fitted rectangle (how = \"rect\")
     '''
 
     import spectral_analysis as sa
     import numpy as np
 
-    if how not in ["com", "fit", "slope"]:
-        raise Exception("\"how\" must be equal either to \"com\",\"fit\" or \"slope\".")
+    if how not in ["com", "fit", "slope", "rect"]:
+        raise Exception("\"how\" must be equal either to \"com\",\"fit\", \"slope\" or \"rect\".")
 
     sheared = sa.load_csv(sheared_spectrum)
     not_sheared = sa.load_csv(not_sheared_spectrum)
@@ -1318,6 +1508,11 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
     elif how == "slope":
         shear = sa.find_slope_shift(sheared, not_sheared)
 
+    elif how == "rect":
+        params_s = sa.fit_rect_smart(sheared, output = "params")
+        params_ns = sa.fit_rect_smart(not_sheared, output = "params")
+        shear = np.mean([params_s[0]-params_ns[0], params_s[1]-params_ns[1]])
+
     if plot:    
         sa.compare_plots([sheared, not_sheared], 
                          legend = ["Sheared spectrum", "Not sheared spectrum"], 
@@ -1338,6 +1533,7 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
 
 
 class beam:
+    import numpy as np
 
     def __init__(self, vertical_polarization, horizontal_polarization):
         self.ver = vertical_polarization
