@@ -1,7 +1,29 @@
+# The module created and developed by 
+# Ksawery Mielczarek
+# Faculty of Physics, University of Warsaw
+# Quantum Photonics Lab
+# 2023-2024
+
+#                      -------
+#                      MODULES
+#                      -------
+
+
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+from math import floor, log10, ceil
+from scipy.fft import fft, fftfreq, fftshift, ifft, ifftshift
+from scipy.interpolate import CubicSpline
+from scipy.optimize import curve_fit
+from scipy.special import hermite as hermite_gen
+import pyvisa
+from pyvisa.constants import VI_FALSE, VI_ATTR_SUPPRESS_END_EN, VI_ATTR_SEND_END_EN
+from IPython.display import display, clear_output
+import time
+import warnings
+warnings.filterwarnings('ignore') # they made me do it
 
 
 #                   --------------
@@ -9,9 +31,12 @@ import matplotlib.pyplot as plt
 #                   --------------
 
 
+
 class spectrum:
     '''
-    Class of an optical spectrum. It stores values of the \"X\" axis (wavelength, frequency or time) and the \"Y\" axis
+    ### Class of an optical spectrum. 
+    
+    It stores values of the \"X\" axis (wavelength, frequency or time) and the \"Y\" axis
     (intensity, phase or complex amplitude) as 1D numpy arrays. Several standard transforms and basic statistics are implemented as class methods.
     '''
 
@@ -19,23 +44,41 @@ class spectrum:
 
         if x_type not in ["time", "freq", "wl"]:
             raise Exception("x_type must be either \"time\" or \"freq\" or \"wl\".")
-        if y_type not in ["phase", "intensity", "complex_ampl"]:
-            raise Exception("y_type must be either \"phase\", \"intensity\" or \"complex_ampl\".")
+        if y_type not in ["phase", "intensity", "complex_ampl", "e-field"]:
+            raise Exception("y_type must be either \"phase\", \"intensity\" or \"complex_ampl\" or \"e-field\".")
         if len(X) != len(Y):
-            raise Exception("X and Y axis must be of the same size.")
-
-        self.X = X
-        self.Y = Y
+            raise Exception("X and Y axis must be of the same length.")
+        
+        if type(X) == list:
+            self.X = np.array(X)
+        elif type(X) == np.ndarray:
+            self.X = X
+        else:
+            raise Exception("\"X\" must be either a list or an array.")
+        
+        if type(Y) == list:
+            self.Y = np.array(Y)
+        elif type(Y) == np.ndarray:
+            self.Y = Y
+        else:
+            raise Exception("\"Y\" must be either a list or an array.")
+        
         self.x_type = x_type
         self.y_type = y_type
         self.spacing = self.calc_spacing()
 
 
     def __len__(self):
+        '''
+        ### Number of point, that spectrum consists of.
+        '''
         return len(self.X)
     
 
     def calc_spacing(self):
+        '''
+        ### Calculate the mean (hopefully constant) spacing between subsequent points on X-axis.
+        '''
         return np.mean(np.diff(np.real(self.X)))
     
 
@@ -46,13 +89,18 @@ class spectrum:
     
 
     def save(self, title):
+        '''
+        ### Save spectrum to .csv file. 
+        
+        The \"title\" must be a string.
+        '''
         data = pd.DataFrame(np.transpose(np.vstack([self.X, self.Y])))
         data.to_csv(title, index = False)
 
 
     def wl_to_freq(self, inplace = True):
         '''
-        Transformation from wavelength domain [nm] to frequency domain [THz].
+        ### Transformation from wavelength domain (nm) to frequency domain (THz).
         '''
 
         c = 299792458 # light speed
@@ -71,8 +119,7 @@ class spectrum:
         
     def constant_spacing(self, inplace = True):
         '''
-        Transformation of a spectrum to have constant spacing on X-axis by linearly interpolating two nearest values on 
-        Y-axis.
+        ### Transformation of a spectrum to have constant spacing on X-axis by linearly interpolating two nearest values on Y-axis.
         '''
 
         def linear_inter(a, b, c, f_a, f_b):
@@ -114,6 +161,8 @@ class spectrum:
 
             new_intens.append(interpolated_int)
 
+        new_intens = np.array(new_intens)
+
         if inplace == True:
             self.X = new_freq
             self.Y = new_intens
@@ -125,7 +174,7 @@ class spectrum:
 
     def cut(self, start = None, end = None, how = "units", inplace = True):
         '''
-        Limit spectrum to a segment [\"start\", \"end\"].
+        ### Limit spectrum to a segment [\"start\", \"end\"].
 
         ARGUMENTS:
 
@@ -182,19 +231,20 @@ class spectrum:
             return spectrum(new_X, new_Y, self.x_type, self.y_type)
         
 
-    def fourier(self, inplace = True):
+    def fourier(self, inplace = True, force = False):
         '''
-        Performs Fourier Transform from \"frequency\" to \"time\" domain.
+        ### Performs Fourier Transform from \"frequency\" to \"time\" domain. 
+        
+        The \"force\" argument allows you to skip the warnings.
         '''
-
-        from scipy.fft import fft, fftfreq, fftshift
         
         # Exceptions
 
-        if self.x_type == "wl":
-            raise Exception("Before applying Fourier transform, transform spectrum from wavelength to frequency domain.")
-        if self.x_type == "time":
-            print("WARNING: Sticking to the convention you are encouraged to use the inverse Fourier transform.")
+        if not force:
+            if self.x_type == "wl":
+                raise Exception("Before applying Fourier transform, transform spectrum from wavelength to frequency domain.")
+            if self.x_type == "time":
+                print("WARNING: Sticking to the convention you are encouraged to use the inverse Fourier transform.")
 
         # Fourier Transform
 
@@ -213,15 +263,16 @@ class spectrum:
             return spectrum(time, FT_intens, "time", self.y_type)
             
 
-    def inv_fourier(self, inplace = True):
+    def inv_fourier(self, inplace = True, force = False):
         '''
-        Performs inverse Fourier transform from \"time\" to \"frequency\" domain.
+        ### Performs inverse Fourier transform from \"time\" to \"frequency\" domain.
+
+        The \"force\" argument allows you to skip the warnings.
         '''
 
-        from scipy.fft import ifft, fftfreq, ifftshift, fftshift
-
-        if self.x_type != "time":
-            print("WARNING: Sticking to the convention you are encouraged to use the Fourier transform (instead for the inverse one).")
+        if not force:
+            if self.x_type != "time":
+                print("WARNING: Sticking to the convention you are encouraged to use the Fourier transform (instead for the inverse one).")
 
         # prepare input
 
@@ -249,7 +300,7 @@ class spectrum:
 
     def find_period(self, height = 0.5, hist = False):
         '''
-        Function finds period in interference fringes by looking for wavelengths, where intensity is around given height and is decreasing. 
+        ### Function finds period in interference fringes by looking for wavelengths, where intensity is around given height and is decreasing. 
 
         ARGUMENTS:
 
@@ -261,9 +312,6 @@ class spectrum:
 
         (mean, std) - mean and standard deviation of all found periods. 
         '''
-
-        import numpy as np
-        import matplotlib.pyplot as plt
 
         wl = self.X
         intens = self.Y
@@ -294,14 +342,66 @@ class spectrum:
         return np.mean(diff_cut), np.std(diff_cut)
     
 
+    def remove_comb(self, period = 0.00063, inplace = True): 
+        '''
+        ### Remove the \"frequency comb\" from the spectrum. 
+        
+        Applicable if the spectrometer has a very fine resolution. \"period\" denotes the period in which the local maximum is searched.
+        '''
+        if self.x_type != "wl":
+            raise Exception("Make sure, that the x_type = \"wl\".")
+        
+        new_X = []
+        new_Y = []
+
+        idx_period = ceil(period/self.spacing)
+        num_of_periods = ceil(len(self) / idx_period)
+        
+        # first estimation of peaks
+
+        for n in range(num_of_periods - 1): # don't care very much about the last - not full - period
+            start = n*idx_period
+            end = (n+1)*idx_period
+            new_X.append(self.X[start + np.argmax(self.Y[start: end])])
+            new_Y.append(np.max(self.Y[start: end]))
+
+        new_X = np.array(new_X)
+        new_Y = np.array(new_Y)
+        
+        # correction for under-sampling (missing some peaks)
+        '''
+        x_spacing = np.mean(np.diff(new_X))
+        undersampl_indc = np.array(range(len(new_X)-1))[np.diff(new_X) > x_spacing*1.33]     # we choose left indices of the periods where we missed a peak
+
+        for idx in undersampl_indc:
+            central_idx = ceil((idx + 0.5)*idx_period)
+            x_value = self.X[central_idx]
+            y_value = self.Y[central_idx]
+            new_X = np.insert(new_X, idx + 1, x_value)
+            new_Y = np.insert(new_Y, idx + 1, y_value)
+        '''
+        # correction for oversampling (choosing a single peak twice or finding a peak, where there's none)
+        '''
+        oversampl_indc = np.array(range(len(new_X)-1))[np.diff(new_X) < x_spacing*0.66]     # we choose left indices of the periods where we missed a peak           
+
+        for idx in np.flip(oversampl_indc): # flip is crucial because we wan other indices to have sense further on
+            new_X = np.delete(new_X, idx)
+            new_Y = np.delete(new_Y, idx)
+        '''
+        # return stuff
+            
+        if inplace:
+            self.X = new_X
+            self.Y = new_Y
+            self.spacing = self.calc_spacing()
+        else:
+            return spectrum(new_X, new_Y, x_type = self.x_type, y_type = self.y_type)
+    
+
     def naive_visibility(self):
         '''        
-        Function returns float in range (0, 1) which is the fraction of maximum intensity, 
-        at which the greatest number of fringes is observable.
-        '''
-
-        import numpy as np
-        from math import floor
+        ### Function returns float in range (0, 1) which is the fraction of maximum intensity, at which the greatest number of fringes is observable.
+        ''' 
 
         maximum = np.max(self.Y)
 
@@ -329,30 +429,30 @@ class spectrum:
         return 1-level
     
 
-    def visibility(self, to_plot = False):
+    def visibility(self, show_plot = False):
         '''
-        Find visibility of interference fringes. First maxima and minima of fringes are found, then they are interpolated 
+        ### Find visibility of interference fringes. 
+        
+        First maxima and minima of fringes are found, then they are interpolated 
         and corresponding sums of intensities are calculated. Visibility is then (max_int-min_int)/max_int
 
-        Optionally you can plot plot interpolated maxima and minima. It looks very nice.
+        Optionally you can use \"show_plot\" to plot interpolated maxima and minima. It looks very cool.
         '''
-        import numpy as np
-        import spectral_analysis as sa
 
         safe_X = self.X.copy()
         minima = find_minima(self)
         maxima = find_maxima(self)
-        inter_minima = sa.interpolate(minima, safe_X)
-        inter_maxima = sa.interpolate(maxima, safe_X)
+        inter_minima = interpolate(minima, safe_X)
+        inter_maxima = interpolate(maxima, safe_X)
         max_sum = np.sum(inter_maxima.Y)
         min_sum = np.sum(inter_minima.Y)
 
-        left = self.quantile(0.2)
-        right = self.quantile(0.8)
+        left = self.comp_quantile(0.2)
+        right = self.comp_quantile(0.8)
         delta = right-left
 
-        if to_plot:
-            sa.compare_plots([self, inter_maxima, inter_minima], 
+        if show_plot:
+            compare_plots([self, inter_maxima, inter_minima], 
                              colors = ["deepskyblue", "green", "red"], 
                              title = "Visibility of {}".format(round((max_sum-min_sum)/max_sum, 3)),
                              start = left-delta, end = right+delta)
@@ -362,11 +462,11 @@ class spectrum:
 
     def replace_with_zeros(self, start = None, end = None, inplace = True):
         '''
-        Replace numbers on Y axis from "start" to "end" with zeroes. "start" and "end" are in X axis' units. 
+        ### Replace numbers on Y axis from "start" to "end" with zeroes. 
+        
+        "start" and "end" are in X axis' units. 
         If \"start\" and \"end\" are \"None\", then beginning and ending of whole spectrum are used as the borders.
         '''
-
-        import numpy as np
 
         if start == None:
             s = 0
@@ -389,10 +489,10 @@ class spectrum:
 
     def shift(self, shift, inplace = True):
         '''
-        Shifts the spectrum by X axis. Warning: only values on X axis are modified.
+        ### Shifts the spectrum by X axis. 
+        
+        Warning: only values on X axis are modified.
         '''
-        import numpy as np
-        from math import floor
 
         new_X = self.X.copy()
         new_X = new_X + shift
@@ -405,19 +505,16 @@ class spectrum:
     
     def smart_shift(self, shift = None, inplace = True):
         '''
-        Shift spectrum by rolling Y-axis. Value of shift is to be given in X axis units. If shift = \"None\",
+        ### Shift spectrum by rolling Y-axis. 
+        
+        Value of shift is to be given in X axis units. If shift = \"None\",
         the spectrum is shifted so, that 1/2-order quantile for Y axis is reached for x = 0.
         '''
-
-        import numpy as np
-        import pandas as pd
-        from math import floor
-        import spectral_analysis as sa
 
         shift2 = shift
 
         if shift == None:
-            shift2 = -self.quantile(1/2)
+            shift2 = -self.comp_quantile(1/2)
 
         index_shift = floor(np.real(shift2)/np.real(self.spacing))
 
@@ -431,9 +528,10 @@ class spectrum:
         
     def very_smart_shift(self, shift, inplace = True):
         '''
-        Shift spectrum by applying FT, multiplying by linear temporal phase and applying IFT. Value of shift is to be given in X axis units.
+        ### Shift spectrum by applying FT, multiplying by linear temporal phase and applying IFT. 
+        
+        Value of shift is to be given in X axis units.
         '''
-        import numpy as np
 
         X2 = self.X.copy()
         Y2 = self.Y.copy()
@@ -446,13 +544,13 @@ class spectrum:
         if inplace == False:
             return spectrum2
 
-    def zero_padding(self, how_much, inplace = True):
+
+    def insert_zeroes(self, how_much, inplace = True):
         '''
-        Add zeros on Y-axis to the left and right of data with constant (mean) spacing on X-axis. 
+        ### Add zeros on Y-axis to the left and right of data with constant (mean) spacing on X-axis.
+
         \"how_much\" specifies number of added zeroes on left and right side of spectrum as a fraction of spectrums length.
         '''
-        import numpy as np
-        from math import floor
 
         length = floor(how_much*self.__len__())
         
@@ -472,13 +570,38 @@ class spectrum:
             self.Y = new_Y
         if inplace == False:
             return spectrum(new_X, new_Y, self.x_type, self.y_type)
+        
+    
+    def increase_resolution(self, times, inplace = True):
+        '''
+        ### Interpolate by padding zeroes in Fourier domain. 
+        
+        \"times\" tells, how many times do you want the resolution increased.
+        '''
+        if times < 1:
+            raise Exception("You want to increase and not decrease the resolution, right? Keep \"times\" above 1.")
+        
+        spectrum_safe = self.copy()
+        initial_mean = np.mean(spectrum_safe.X)
+
+        if times > 1:   # just a quick fix for times = 1 case
+            spectrum_safe.fourier(inplace = True, force = True)
+            spectrum_safe.insert_zeroes(how_much = 1/2*(times-1))
+            spectrum_safe.inv_fourier(inplace = True, force = True)
+
+        spectrum_safe.X -= (np.mean(spectrum_safe.X) - initial_mean)
+
+        if inplace == True:
+            self.X = spectrum_safe.X
+            self.Y = spectrum_safe.Y
+        if inplace == False:
+            return spectrum_safe
 
 
-    def quantile(self, q):
+    def comp_quantile(self, q):
         '''
-        Finds x in X axis such that integral of intensity to x is fraction of value q of whole intensity.
+        ### Finds x in X axis such that integral of intensity to x is fraction of value q of whole intensity.
         '''
-        import numpy as np
 
         sum = 0
         all = np.sum(np.abs(self.Y))
@@ -491,9 +614,16 @@ class spectrum:
         return x
     
 
+    def comp_center(self):
+        '''
+        ### Return center of mass of the spectrum in X-axis units.
+        '''
+        return np.sum(self.X*self.Y)/np.sum(self.Y)
+    
+
     def normalize(self, norm = "highest", shift_to_zero = True, inplace = True):
         '''
-        Normalize spectrum by linearly changing values of intensity and eventually shifting spectrum to zero.
+        ### Normalize spectrum by a linear scaling of the values of intensity and eventually shifting spectrum to zero.
 
         ARGUMENTS:
 
@@ -502,7 +632,6 @@ class spectrum:
         
         shift_to_zero - if \"True\", then spectrum is shifted by X axis, by simply np.rolling it.
         '''
-        import numpy as np
 
         if norm not in ["sup", "L1", "L2"]:
             raise Exception("\"norm\" parameter must be either \"sup\", \"L1\" or \"L2\".")
@@ -522,7 +651,7 @@ class spectrum:
 
         if norm == "L1":
             integral = np.sum(np.abs(Y_safe))/(X_safe[-1]-X_safe[0])
-            median = safe_spectrum.quantile(1/2)
+            median = safe_spectrum.comp_quantile(1/2)
             max_idx = np.searchsorted(np.abs(Y_safe), median)
             Y_safe /= integral
             if shift_to_zero:
@@ -532,7 +661,7 @@ class spectrum:
 
         if norm == "L2":
             integral = np.sum(Y_safe**2)/(X_safe[-1]-X_safe[0])
-            median = safe_spectrum.quantile(1/2)
+            median = safe_spectrum.comp_quantile(1/2)
             max_idx = np.searchsorted(np.abs(Y_safe), median)
             Y_safe /= np.sqrt(integral)
             if shift_to_zero:
@@ -546,26 +675,44 @@ class spectrum:
         
         if inplace == False:
             return spectrum(X_safe, Y_safe, self.x_type, self.y_type)
+
+
+    def remove_temporal_phase(self, magnitude = 0):
+        '''
+        ### Remove temporal (linear) phase from the phase spectrum. 
         
+        \"magnitude\" denotes the number that is subtracted from the phase in the left-most
+        part of spectrum. The global phase is chosen so that the value of phase in the precise middle of the spectrum is not modified.
+        '''
+        if self.y_type != "phase":
+            raise Exception("The spectrum, you are trying to remove temporal phase from, is NOT a phase spectrum.")
+
+        X = self.X.copy() - np.mean(self.X)
+        X /= X[-1]
+        Y = magnitude*X.copy()
+        self.Y = self.Y + Y
+
+
     def power(self):
         '''
-        Power of a spectrum. In other words - integral of absolute value of it.
+        ### Power of a spectrum. 
+        
+        In other words - integral of absolute value of the spectrum. Arbitrary units are used.
         '''
-        import numpy as np
-        from math import floor, log10
 
         # simple function to round to significant digits
         def round_to_dig(x, n):
             return round(x, -int(floor(log10(abs(x)))) + n - 1)
     
-        return  round_to_dig(np.sum(self.X*np.conjugate(self.X)), 3)
+        return round_to_dig(np.sum(self.X*np.conjugate(self.X)), 3)
         
-    def FWHM(self):
-        '''
-        Calculate Full Width at Half Maximum. If multiple peaks are present in spectrum, the function might not work properly.
-        '''
 
-        import numpy as np
+    def comp_FWHM(self):
+        '''
+        ### Calculate Full Width at Half Maximum. 
+        
+        If multiple peaks are present in spectrum, the function might not work properly.
+        '''
 
         left = None
         right = None
@@ -590,19 +737,16 @@ class spectrum:
 
     def remove_offset(self, period, inplace = True):
         '''
-        The function improves visibility of interference fringes by subtracting moving minimum i. e. 
-        minimum of a segment of length \"period\", centered at given point.
+        ### The function improves visibility of interference fringes 
+        by subtracting a moving minimum i. e. minimum of a segment of length \"period\", centered at given point.
         '''
 
-        import numpy as np
-        from math import floor as flr
-
-        idx_period = flr(period/self.spacing)
+        idx_period = floor(period/self.spacing)
 
         new_Y = []
         for i in range(self.__len__()):
-            left = np.max([i - flr(idx_period/2), 0])
-            right = np.min([i + flr(idx_period/2), self.__len__() - 1])
+            left = np.max([i - floor(idx_period/2), 0])
+            right = np.min([i + floor(idx_period/2), self.__len__() - 1])
             new_Y.append(self.Y - np.min(self.Y[left:right]))
         new_Y = np.array(new_Y)
 
@@ -615,19 +759,18 @@ class spectrum:
 
     def moving_average(self, period, inplace = True):
         '''
-        Smooth spectrum by taking moving average with \"period\" in X axis units.
+        ### Smooth spectrum 
+        by taking moving average with \"period\" in X axis units.
+        
         On the beginning and ending of spectrum shorter segments are used.
         '''
 
-        from math import floor as flr
-        import numpy as np
-
-        idx_period = flr(period/self.spacing)
+        idx_period = floor(period/self.spacing)
 
         new_Y = []
         for i in range(self.__len__()):
-            left = np.max([i - flr(idx_period/2), 0])
-            right = np.min([i + flr(idx_period/2), self.__len__() - 1])
+            left = np.max([i - floor(idx_period/2), 0])
+            right = np.min([i + floor(idx_period/2), self.__len__() - 1])
             new_Y.append(np.mean(self.Y[left:right]))
         new_Y = np.array(new_Y)
 
@@ -640,12 +783,12 @@ class spectrum:
 
     def moving_average_interior(self, period, inplace = True):
         '''
-        Smooth the INTERIOR of the spectrum by taking moving average with \"period\" in X axis units.
+        ### Smooth the INTERIOR of the spectrum 
+        
+        by taking moving average with \"period\" in X axis units.
+
         On the beginning and ending of spectrum shorter segments are used.
         '''
-
-        from math import floor as flr
-        import numpy as np
 
         sup = np.max(self.Y)
         support = self.X[self.Y >= sup/2]
@@ -654,7 +797,7 @@ class spectrum:
         left_border_idx = np.searchsorted(self.X, left_border)
         right_border_idx = np.searchsorted(self.X, right_border)
 
-        idx_period = flr(period/self.spacing)
+        idx_period = floor(period/self.spacing)
 
         new_Y = []
         for i in range(self.__len__()):
@@ -662,8 +805,8 @@ class spectrum:
                 new_Y.append(self.Y[i])
                 continue
             smooth_range = np.min([idx_period, 2*np.abs(left_border_idx - i), 2*np.abs(right_border_idx - i)])
-            left = np.max([i - flr(smooth_range/2), 0])
-            right = np.min([i + flr(smooth_range/2), self.__len__() - 1])
+            left = np.max([i - floor(smooth_range/2), 0])
+            right = np.min([i + floor(smooth_range/2), self.__len__() - 1])
             new_Y.append(np.mean(self.Y[left:right]))
         new_Y = np.array(new_Y)
 
@@ -683,26 +826,39 @@ class spectrum:
 
 def load_csv(filename, x_type = "wl", y_type = "intensity", rows_to_skip = 2):
     '''
-    Load CSV file to a spectrum class. Spectrum has on default wavelengths on X axis and intensity on Y axis.
+    ### Load CSV file to a spectrum class.
+     
+    Spectrum has on default wavelengths on X axis and intensity on Y axis.
     '''
-    import pandas as pd
     spectr = pd.read_csv(filename, skiprows = rows_to_skip)
     return spectrum(spectr.values[:, 0], spectr.values[:, 1], x_type = x_type, y_type = y_type)
 
 
-def load_tsv(filename, x_type = "wl", y_type = "intensity"):
+def load_tsv(filename, x_type = "wl", y_type = "intensity", source = "OSA"):
     '''
-    Load TSV file to a spectrum class. Spectrum has on default wavelengths on X axis and intensity on Y axis.
+    ### Load TSV file to a spectrum class. 
+    
+    Spectrum has on default wavelengths on X axis and intensity on Y axis.
     '''
-    import pandas as pd
-    spectr = pd.read_table(filename, skiprows = 2)
+    if source == "APEX":
+        spectr = pd.read_table(filename, skiprows = 3)
+        spectr.columns = ["X", "Y", "trash"]
+        spectr.drop_duplicates(inplace = True, subset = ["X"])
+
+    elif source == "OSA":
+        spectr = pd.read_table(filename, skiprows = 2)
+
+    else:
+        raise Exception("\"source\" must be either \"OSA\" or \"APEX\"")
+
     return spectrum(spectr.values[:, 0], spectr.values[:, 1], x_type = x_type, y_type = y_type)
 
 
 def interpolate(old_spectrum, new_X):
     '''
-    Interpolate rarely sampled spectrum for values in new X-axis. Interpolation is performed with cubic functions. 
-    If y-values to be interpolated are complex, they are casted to reals.
+    ### Interpolate rarely sampled spectrum for values in new X-axis. 
+    
+    Interpolation is performed with cubic functions. If y-values to be interpolated are complex, they are casted to reals.
 
     ARGUMENTS:
 
@@ -714,9 +870,6 @@ def interpolate(old_spectrum, new_X):
 
     Interpolated spectrum.
     '''
-    
-    import numpy as np
-    from scipy.interpolate import CubicSpline
 
     X = np.real(old_spectrum.X.copy())
     Y = np.real(old_spectrum.Y.copy())
@@ -729,12 +882,11 @@ def interpolate(old_spectrum, new_X):
 
 def create_complex_spectrum(intensity_spectrum, phase_spectrum, extrapolate = False):
     '''
-    Given the intensity spectrum and the phase spectrum compute the complex amplitude spectrum. With \"extrapolate = False\" the spectral phase of the spectrum
+    ### Given the intensity spectrum and the phase spectrum compute the complex amplitude spectrum. 
+    
+    With \"extrapolate = False\" the spectral phase of the spectrum
     is zeroed outside the area with the well-known phase.
     '''
-
-    import spectral_analysis as sa
-    import numpy as np
 
     if intensity_spectrum.y_type != "intensity":
         print("WARNING: Are you sure that the \"intensity_spectrum\" carries the information about intensity?")
@@ -743,7 +895,7 @@ def create_complex_spectrum(intensity_spectrum, phase_spectrum, extrapolate = Fa
 
     support_left = np.searchsorted(intensity_spectrum.X, phase_spectrum.X[0])
     support_right = np.searchsorted(intensity_spectrum.X, phase_spectrum.X[-1])
-    new_phase = sa.interpolate(phase_spectrum, intensity_spectrum.X)
+    new_phase = interpolate(phase_spectrum, intensity_spectrum.X)
 
     if not extrapolate:
         for i in range(len(intensity_spectrum)):
@@ -752,16 +904,15 @@ def create_complex_spectrum(intensity_spectrum, phase_spectrum, extrapolate = Fa
 
     amplitude = intensity_spectrum.Y * np.exp(1j*new_phase.Y)
     
-    return sa.spectrum(intensity_spectrum.X, amplitude, intensity_spectrum.x_type, "complex_ampl")
+    return spectrum(intensity_spectrum.X, amplitude, intensity_spectrum.x_type, "complex_ampl")
 
 
-def fit_fiber_length(phase_spectrum, plot = False, guessed_length = 80):
+def fit_fiber_length(phase_spectrum, show_plot = False, guessed_length = 80):
     '''
-    Fit parabolic spectral phase to the given spectrum and return the length of chirping fiber corresponding to that phase.
+    ### Fit parabolic spectral phase 
+    
+    to the given spectrum and return the length of chirping fiber corresponding to that phase.
     '''
-    from scipy.optimize import curve_fit
-    import spectral_analysis as sa
-    import numpy as np
 
     def chirp_phase(frequency, centre, fiber_length):
         c = 299792458 
@@ -771,25 +922,24 @@ def fit_fiber_length(phase_spectrum, plot = False, guessed_length = 80):
         omega_mean = centre*2*np.pi
         return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
 
-    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [192, guessed_length], bounds = [[150, 30],[300, 300]])
+    param, cov = curve_fit(chirp_phase, phase_spectrum.X, phase_spectrum.Y, [192, guessed_length], bounds = [[150, 10],[300, 300]])
 
-    if plot:
+    if show_plot:
         new_X = phase_spectrum.X.copy()
-        fit_phase = sa.spectrum(new_X, chirp_phase(new_X, param[0], param[1]), x_type = "freq", y_type = "phase")
-        sa.compare_plots([phase_spectrum, fit_phase], legend = ["Original spectrum", "Phase corresponding to fiber of {}m".format(round(param[1]))])
+        fit_phase = spectrum(new_X, chirp_phase(new_X, param[0], param[1]), x_type = "freq", y_type = "phase")
+        compare_plots([phase_spectrum, fit_phase], legend = ["Original spectrum", "Phase corresponding to fiber of {}m".format(round(param[1]))])
 
     return np.abs(param[1])
     
 
-def chirp_r2(phase_spectrum, fiber_length, plot = False):
+def chirp_r2(phase_spectrum, fiber_length, show_plot = False):
     '''
-    Given spectral phase spectrum and the length of fiber employed in experiment, fit corresponding spectral phase to
-    experimental data (only fitting center) and return the R^2 statistics judging quality of that fit.
+    Given spectral phase spectrum and the length of fiber employed in experiment, 
+    fit corresponding spectral phase to experimental data (only fitting center) and 
+    return the R^2 statistics judging quality of that fit.
+
     Additionally you can plot both phases on a single plot.
     '''
-    from scipy.optimize import curve_fit
-    import spectral_analysis as sa
-    import numpy as np
 
     def R2(data_real, data_pred):
         TSS = np.sum(np.power(data_real - np.mean(data_real), 2))
@@ -816,15 +966,15 @@ def chirp_r2(phase_spectrum, fiber_length, plot = False):
     Y_pred = chirp_phase(phase_spectrum.X, centrum)
     score = R2(Y_real, Y_pred)
 
-    if plot:
-        reality = sa.spectrum(phase_spectrum.X.copy(), Y_real, x_type = "freq", y_type = "phase")
-        prediction = sa.spectrum(phase_spectrum.X.copy(), Y_pred, x_type = "freq", y_type = "phase")
+    if show_plot:
+        reality = spectrum(phase_spectrum.X.copy(), Y_real, x_type = "freq", y_type = "phase")
+        prediction = spectrum(phase_spectrum.X.copy(), Y_pred, x_type = "freq", y_type = "phase")
 
         if np.mean(reality.Y) < 0:
             reality.Y *= -1
             prediction.Y *= -1
 
-        sa.compare_plots([reality, prediction], 
+        compare_plots([reality, prediction], 
                          title = "Experimental and model chirp phase for fiber of {}m\nR-squared value equal to {}".format(fiber_length, round(score, 3)),
                          legend = ["Experiment", "Model"],
                          colors = ["darkorange", "darkgreen"])
@@ -833,15 +983,14 @@ def chirp_r2(phase_spectrum, fiber_length, plot = False):
 
 def fit_rect(spectr, output = "params", fixed_area = True, slope = False, slope_factor = 0.1):
     '''
-    Fit a rectangle to the given spectrum. If output = \"params\" then tuple (start, end, height) characterizing the shape of rectangle is returned.
+    ### Fit a rectangle to the given spectrum. 
+    If output = \"params\" then tuple (start, end, height) characterizing the shape of rectangle is returned.
     If output = \"spectrum\" returns fitted rectangle as a spectrum class object. If fixed_area = True, than fitted spectrum has the same area as the initial.
     If slope = True, than not a rectangle but a trapeze is fitted. The slope of its sides is the greater, the greater slope_factor is.
     '''
-    from scipy.optimize import curve_fit
-    from spectral_analysis import spectrum
-    import numpy as np
 
     def rect(x, start, end, height):
+
         if isinstance(x, type(np.array([]))):
             y = x.copy()
             delta = (end-start)*slope_factor
@@ -863,6 +1012,7 @@ def fit_rect(spectr, output = "params", fixed_area = True, slope = False, slope_
                     else:
                         y[i] = height
             return y
+        
         else:
             print("You gave me a scalar. Is it good?")
             if x < start or x > end:
@@ -909,12 +1059,11 @@ def fit_rect(spectr, output = "params", fixed_area = True, slope = False, slope_
 
 def fit_rect_smart(spectr, output = "params"):
     '''
-    With functions like that I impress myself. output must be either \"params\" - then a tuple (a, b, height) is returned -
+    ### Fit a rectangle to the given spectrum in a very fucking smart way.
+
+    output must be either \"params\" - then a tuple (a, b, height) is returned -
     or \"spectrum\", resulting in returning a fitted rectangle spectrum
     '''
-    import numpy as np
-    from math import floor
-    import spectral_analysis as sa
 
     # we limit ourselves to the significant part of spectrum
 
@@ -971,7 +1120,7 @@ def fit_rect_smart(spectr, output = "params"):
         # cool looking loss spectrum
 
         Y = np.concatenate([left_axis_loss, right_axis_loss])
-        loss_spectrum = sa.spectrum(spectr.X[start_idx:end_idx], Y, spectr.x_type, spectr.y_type)
+        loss_spectrum = spectrum(spectr.X[start_idx:end_idx], Y, spectr.x_type, spectr.y_type)
 
         # now, for each side, we find height minimizing the loss at best
 
@@ -1013,7 +1162,7 @@ def fit_rect_smart(spectr, output = "params"):
     elif output == "spectrum":
         new_X = spectr.X.copy()
         new_Y = rect(new_X, left_side, right_side, final_height)
-        return sa.spectrum(new_X, new_Y, spectr.x_type, spectr.y_type)
+        return spectrum(new_X, new_Y, spectr.x_type, spectr.y_type)
     
     else:
         raise Exception("output must be either \"params\" or \"spectrum\"")
@@ -1021,10 +1170,9 @@ def fit_rect_smart(spectr, output = "params"):
 
 def find_minima(fringes_spectrum):
     '''
-    Find minima of interference fringes by looking at nearest neighbors. Spectrum with minima is returned.
+    ### Find minima of interference fringes 
+    by looking at nearest neighbors. Spectrum with minima is returned.
     '''
-    import spectral_analysis as sa
-
     X = []
     Y = []
     for i in range(len(fringes_spectrum)):
@@ -1034,15 +1182,14 @@ def find_minima(fringes_spectrum):
             X.append(fringes_spectrum.X[i])
             Y.append(fringes_spectrum.Y[i])
     
-    return sa.spectrum(np.array(X), np.array(Y), fringes_spectrum.x_type, fringes_spectrum.y_type)
+    return spectrum(np.array(X), np.array(Y), fringes_spectrum.x_type, fringes_spectrum.y_type)
 
 
 def find_maxima(fringes_spectrum):
     '''
-    Find maxima of interference fringes by looking at nearest neighbors. Spectrum with maxima is returned.
+    ### Find maxima of interference fringes 
+    by looking at nearest neighbors. Spectrum with maxima is returned.
     '''
-    import spectral_analysis as sa
-    import numpy as np
 
     X = []
     Y = []
@@ -1053,12 +1200,12 @@ def find_maxima(fringes_spectrum):
             X.append(fringes_spectrum.X[i])
             Y.append(fringes_spectrum.Y[i])
     
-    return sa.spectrum(np.array(X), np.array(Y), fringes_spectrum.x_type, fringes_spectrum.y_type)
+    return spectrum(np.array(X), np.array(Y), fringes_spectrum.x_type, fringes_spectrum.y_type)
 
 
-def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot = "abs", start = None, end = None, save = False):
+def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs", start = None, end = None, save = False):
     '''
-    Fast spectrum plotting using matplotlib.pyplot library.
+    ### Fast spectrum plotting using matplotlib.pyplot library.
 
     ARGUMENTS:
 
@@ -1077,11 +1224,7 @@ def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot =
     save - if to save the plot in the program's directory. The title of the plot will be by default used as the filename.
     '''
 
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from math import floor, log10
-
-    spectrum_safe = spectrum_safe.copy()
+    spectrum_safe = spectrum.copy()
     
     # simple function to round to significant digits
 
@@ -1089,7 +1232,7 @@ def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot =
         return round(x, -int(floor(log10(abs(x)))) + n - 1)
 
     # invalid arguments
-    
+
     if what_to_plot not in ("abs", "imag", "real", "complex", "trigonometric"):
         raise Exception("Argument \"what_to_plot\" must be either \"abs\", \"imag\", \"real\", \"complex\" or \"trigonometric\".")
 
@@ -1151,12 +1294,14 @@ def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot =
         intensity /= np.max(np.abs(intensity))  # normalize intensity with respect to phase
         intensity *= np.max(np.abs(phase[start_idx: end_idx]))
 
-        plt.plot(spectrum_safe.X, intensity, color = "orange", alpha = 0.5)
+        plt.fill_between(spectrum_safe.X, intensity, color = "orange", alpha = 0.5)
         plt.plot(spectrum_safe.X[start_idx: end_idx], phase[start_idx: end_idx], color = "darkviolet")
         plt.legend(["Spectral intensity", "Spectral phase"], bbox_to_anchor = [1, 0.17])
 
     else:
         plt.plot(spectrum_safe.X, spectrum_safe.Y, color = color)
+        if spectrum_safe.y_type == "intensity":
+            plt.ylim([0, 1.1*np.max(spectrum_safe.Y)])
      
     plt.grid()
     if to_cut:
@@ -1166,7 +1311,9 @@ def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot =
     if spectrum_safe.y_type in ["phase", "complex_ampl"] :
         plt.ylabel("Spectral phase [rad]")
     if spectrum_safe.y_type == "intensity":
-        plt.ylabel("Intensity")    
+        plt.ylabel("Intensity")
+    if spectrum_safe.y_type == "e-field":
+        plt.ylabel("Electric Field")        
     if spectrum_safe.x_type == "wl":
         plt.xlabel("Wavelength (nm)")
         unit = "nm"
@@ -1195,7 +1342,7 @@ def plot(spectrum_safe, color = "darkviolet", title = "Spectrum", what_to_plot =
 
 def compare_plots(spectra, title = "Spectra", legend = None, colors = None, start = None, end = None, abs = False):
     '''
-    Show several spectra on single plot.
+    ### Show several spectra on single plot.
 
     ARGUMENTS:
 
@@ -1212,9 +1359,6 @@ def compare_plots(spectra, title = "Spectra", legend = None, colors = None, star
     abs - if \"True\", then absolute values of spectra is plotted.
     '''
     
-    import matplotlib.pyplot as plt
-    import numpy as np
-
     # invalid input
 
     dummy = []
@@ -1272,10 +1416,9 @@ def compare_plots(spectra, title = "Spectra", legend = None, colors = None, star
 
 def recover_pulse(phase_spectrum, intensity_spectrum):
     '''
-    Reconstructs the pulse (or any type of spectrum in time), given spectrum with spectral phase and spectrum with spectral intensity.
+    ### Reconstructs the pulse 
+    (or any type of spectrum in time), given spectrum with spectral phase and spectrum with spectral intensity.
     '''
-
-    import numpy as np
 
     if len(phase_spectrum) != len(intensity_spectrum):
         raise Exception("Frequency axes of phase and intensity are not of equal length.")
@@ -1285,7 +1428,7 @@ def recover_pulse(phase_spectrum, intensity_spectrum):
     for i in range(len(complex_Y)):
         complex_Y[i] *= np.exp(1j*phase_spectrum.Y[i])
 
-    pulse_spectrum = spectrum(phase_spectrum.X.copy(), complex_Y, "freq", "intensity")
+    pulse_spectrum = spectrum(phase_spectrum.X.copy(), complex_Y, "freq", "e-field")
     pulse_spectrum.fourier()
     pulse_spectrum.Y = 2*np.real(pulse_spectrum.Y)
     return pulse_spectrum
@@ -1293,13 +1436,11 @@ def recover_pulse(phase_spectrum, intensity_spectrum):
 
 def find_shift(spectrum_1, spectrum_2):
     '''
-    Returns translation between two spectra in THz. Spectra in wavelength domain are at first transformed into frequency domain.
+    ### Returns translation between two spectra in THz. 
+    Spectra in wavelength domain are at first transformed into frequency domain.
     Least squares is loss function to be minimized. Shift is found by brute force: 
     checking number of shifts equal to number of points on X axis.
     '''
-
-    import numpy as np
-    from math import floor
 
     spectrum1 = spectrum_1.copy()
     spectrum2 = spectrum_2.copy()
@@ -1322,7 +1463,7 @@ def find_shift(spectrum_1, spectrum_2):
     
     minimum = np.sum(np.abs(spectrum1.Y)**2)
     idx = 0
-    width = np.max(np.array([spectrum1.FWHM(), spectrum2.FWHM()]))
+    width = np.max(np.array([spectrum1.comp_FWHM(), spectrum2.comp_FWHM()]))
     index_width = floor(width/spectrum1.spacing)
     for i in range(-index_width, index_width):
          if minimum > error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i)):
@@ -1337,7 +1478,6 @@ def ratio(vis_value):
     Given visibility of interference fringes in spectrum, the function returns ratio of intensities of two pulses that 
     are responsible for the interference pattern. Ratio of lower intensity to the greater is calculated.
     '''
-    import numpy as np
 
     def vis(x):
         '''Inverse function of ratio.'''
@@ -1353,23 +1493,26 @@ def ratio(vis_value):
 
 def gaussian_pulse(bandwidth, centre, FWHM, x_type = "freq", num = 1000):
     '''
-    Creates spectrum with gaussian intensity. "bandwidth" is a tuple with start and the end of the entire spectrum. 
+    ### Creates spectrum with gaussian intensity. 
+    "bandwidth" is a tuple with start and the end of the entire spectrum. 
     "centre" and "FWHM" characterize the pulse itself. The spectrum is composed of \"num\" = 1000 points on default.
     '''
 
-    import spectral_analysis as sa
-    X = np.linspace(bandwidth[0], bandwidth[1], num = num)
-    sd = FWHM/2.355
     def gauss(x, mu, std):
         return 1/(std*np.sqrt(2*np.pi))*np.exp(-(x-mu)**2/(2*std**2))
     gauss = np.vectorize(gauss)
+
+    sd = FWHM/2.355
+    X = np.linspace(bandwidth[0], bandwidth[1], num = num)
     Y = gauss(X, centre, sd)
-    return sa.spectrum(X, Y, "freq", "intensity")
+
+    return spectrum(X, Y, x_type, "intensity")
 
 
 def hermitian_pulse(pol_num, bandwidth, centre, FWHM, num = 1000, x_type = "freq"):
     '''
-    Creates spectrum with \"pol-num\"-th Hermit-Gauss intensity mode. "bandwidth" is a tuple with start and the end of the entire spectrum. 
+    ### Creates spectrum with \"pol-num\"-th Hermit-Gauss intensity mode. 
+    "bandwidth" is a tuple with start and the end of the entire spectrum. 
     "centre" and "FWHM" characterize the pulse itself. The spectrum is composed of \"num\" = 1000 points on default.
     '''
 
@@ -1377,11 +1520,6 @@ def hermitian_pulse(pol_num, bandwidth, centre, FWHM, num = 1000, x_type = "freq
 
     if x_type not in ["freq", "wl", "time"]:
         raise Exception("x_type must be either \"freq\", \"nm\" or \"time\"")
-
-    # modules
-
-    import spectral_analysis as sa
-    from scipy.special import hermite as hermite_gen
 
     # and calculations
 
@@ -1395,15 +1533,15 @@ def hermitian_pulse(pol_num, bandwidth, centre, FWHM, num = 1000, x_type = "freq
     Y_hermite = hermite_pol(2*(X-centre)/FWHM)
     Y_out = Y_hermite*Y_gauss
 
-    spectrum_out = sa.spectrum(X, Y_out, "freq", "intensity")
+    spectrum_out = spectrum(X, Y_out, "freq", "intensity")
     spectrum_out.normalize(norm = "L2", shift_to_zero = False)
 
     return spectrum_out
 
 
-def chirp_phase(bandwidth, centre, fiber_length):
+def chirp_phase(bandwidth, centre, fiber_length, num):
     '''
-    Creates spectrum class object with spectral phase corresponding to propagation of a pulse through "fiber_length" of PM fiber.
+    ### Creates spectrum class object with spectral phase corresponding to propagation of a pulse through "fiber_length" of PM fiber.
     "bandwidth" is a tuple with start and the end of the entire spectrum OR already created X-axis of the spectrum. 
     "centre" determines the minimum of spectral phase.
     '''
@@ -1411,7 +1549,7 @@ def chirp_phase(bandwidth, centre, fiber_length):
     l_0 = c/(centre*1e3)
     D_l = 17
     if len(bandwidth) == 2:
-        X = np.linspace(bandwidth[0], bandwidth[1], 1000)
+        X = np.linspace(bandwidth[0], bandwidth[1], num)
     else:
         X = bandwidth.copy()
     omega = X*2*np.pi
@@ -1419,7 +1557,13 @@ def chirp_phase(bandwidth, centre, fiber_length):
     return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
 
 
-def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0.3, sampl_num = 500):
+def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0.5, sampl_num = 500):
+    '''
+    ### Find relative shift between the spectra by computing the shift of the slope. 
+    Precisely, one computes the difference between x-arguments, when spectrum reaches for the very first time 
+    value y, where \"low\"*max <= y <= \"high\"*max, where max denotes maximum value of the intensity. The number of y-values used is equal to \"sampl_num\". 
+    The shear returned is the mean of such differences for the left and the right slope.
+    '''
 
     sup_sheared = np.max(sheared_spectrum.Y)
     sup_not_sheared = np.max(not_sheared_spectrum.Y)
@@ -1474,50 +1618,85 @@ def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0
     return (left_shift+right_shift)/2
 
 
-def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, how = "slope", plot = False):
+def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, normalize = False, how = "slope", show_plot = False, improve_resolution = 1):
     '''
-    Find shear between two spectra given names of two csv files with those spectral, optional \"smoothing period\". 
-    You can find the shift by fitting it (how = \"fit\"), by calculating the shift between centers of mass (how = \"com\"),
-    by computing the shift of the slope (how = \"slope\") or by calculating the shift of fitted rectangle (how = \"rect\")
-    '''
+    ## Find shear between two spectra.
 
-    import spectral_analysis as sa
-    import numpy as np
+    ### ARGUMENTS:
+
+    sheared_spectrum - path to .csv file containing measured sheared spectrum.
+
+    not_sheared_spectrum - path to .csv file containing measured not-sheared spectrum.
+
+    smoothing_period - apply \"moving average\" to locally smooth the spectra.
+
+    normalize - normalize both spectra, i.e. divide their intensities by the maximum intensity value.
+
+    how - method of computing the shift between two spectra. You can find the shift by fitting it (how = \"fit\"), 
+    by calculating the shift between centers of mass (how = \"com\"), by computing the shift of the slope (how = \"slope\") 
+    or by calculating the shift of fitted rectangle (how = \"rect\").
+
+    show_plot - show both spectra on the first plot and on the second plot show again both spectra, 
+    while the sheared spectrum has been numerically \"desheared\". This may help estimate if the computed shear is accurate.
+
+    improve_resolution - use the zero padding method for interpolation and increasing number of points constituting the spectra.
+    Writing \"improve_resolution = 5\" will cause number of points being increased 5 times.
+    '''
 
     if how not in ["com", "fit", "slope", "rect"]:
         raise Exception("\"how\" must be equal either to \"com\",\"fit\", \"slope\" or \"rect\".")
 
-    sheared = sa.load_csv(sheared_spectrum)
-    not_sheared = sa.load_csv(not_sheared_spectrum)
+    if isinstance(sheared_spectrum, str):
+        sheared = load_csv(sheared_spectrum)
+    elif isinstance(sheared_spectrum, spectrum):
+        sheared = sheared_spectrum.copy()
+    else:
+        raise Exception("\"sheared_spectrum\" must be either a path of .csv file with spectrum or a \"spectrum\" class object.")
+    
+    if isinstance(not_sheared_spectrum, str):
+        not_sheared = load_csv(not_sheared_spectrum)
+    elif isinstance(not_sheared_spectrum, spectrum):
+        not_sheared = not_sheared_spectrum.copy()
+    else:
+        raise Exception("\"sheared_spectrum\" must be either a path of .csv file with spectrum or a \"spectrum\" class object.")
+    
+    if sheared.x_type == "wl":
+        sheared.wl_to_freq()
+        sheared.constant_spacing()
+    if not_sheared.x_type == "wl":
+        not_sheared.wl_to_freq()
+        not_sheared.constant_spacing()
 
-    sheared.wl_to_freq()
-    not_sheared.wl_to_freq()
-    sheared.constant_spacing()
-    not_sheared.constant_spacing()
+    sheared.increase_resolution(improve_resolution)
+    not_sheared.increase_resolution(improve_resolution)
 
     if smoothing_period != None:
-        sheared.moving_average_interior(smoothing_period)
-        not_sheared.moving_average_interior(smoothing_period)
+        sheared.moving_average(smoothing_period)
+        not_sheared.moving_average(smoothing_period)
+        
+    if normalize:
+        sheared.normalize("highest", False)
+        not_sheared.normalize("highest", False)
 
     if how == "com":
-        shear = sheared.quantile(0.5)-not_sheared.quantile(0.5)
+        shear = sheared.comp_center() - not_sheared.comp_center()
 
     elif how == "fit":
-        shear = sa.find_shift(sheared, not_sheared)
+        shear = find_shift(sheared, not_sheared)
 
     elif how == "slope":
-        shear = sa.find_slope_shift(sheared, not_sheared)
+        shear = find_slope_shift(sheared, not_sheared)
 
     elif how == "rect":
-        params_s = sa.fit_rect_smart(sheared, output = "params")
-        params_ns = sa.fit_rect_smart(not_sheared, output = "params")
+        params_s = fit_rect_smart(sheared, output = "params")
+        params_ns = fit_rect_smart(not_sheared, output = "params")
         shear = np.mean([params_s[0]-params_ns[0], params_s[1]-params_ns[1]])
 
-    if plot:    
-        sa.compare_plots([sheared, not_sheared], 
+    if show_plot:    
+        compare_plots([sheared, not_sheared], 
                          legend = ["Sheared spectrum", "Not sheared spectrum"], 
                          title = "Shear = {} THz".format(round(shear, 5)))
-        sa.compare_plots([sheared.shift(-shear, inplace = False), not_sheared], 
+        compare_plots([sheared.shift(-shear, inplace = False), not_sheared], 
                          legend = ["Resheared sheared spectrum", "Not sheared spectrum"], 
                          title = "Shifting sheared spectrum to the \"zero\" position".format(round(shear, 5)),
                          colors = ["green", "orange"])
@@ -1533,11 +1712,17 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
 
 
 class beam:
-    import numpy as np
+    '''
+    Suitable for performing basic simulations with the experimental setup.
+    '''
 
     def __init__(self, vertical_polarization, horizontal_polarization):
         self.ver = vertical_polarization
         self.hor = horizontal_polarization
+
+
+    def copy(self):
+        return beam(self.ver.copy(), self.hor.copy())
 
 
     def mix(self, transmission_matrix):
@@ -1574,7 +1759,6 @@ class beam:
 
 
     def chirp(self, polarization, fiber_length):
-        import spectral_analysis as sa
 
         if polarization not in ["ver", "hor"]:
             raise Exception("Polarization must be either \"ver\" or \"hor\".")
@@ -1591,8 +1775,7 @@ class beam:
         if polarization == "hor": self.hor.Y = self.hor.Y*np.exp(1j*phase)
 
 
-    def shear(self, shift, polarization):
-        import spectral_analysis as sa
+    def shear(self, polarization, shift):
 
         if polarization not in ["ver", "hor"]:
             raise Exception("Polarization must be either \"ver\" or \"hor\".")
@@ -1613,21 +1796,22 @@ class beam:
             self.ver.Y *= 0
 
     def powermeter(self):
+
         h = np.sum(self.hor.Y*np.conjugate(self.hor.Y))
         v = np.sum(self.ver.Y*np.conjugate(self.ver.Y))
-        h = np.real(h)
-        v = np.real(v)
+        h = np.abs(h)
+        v = np.abs(v)
         h = round(h)
         v = round(v)
         print(u"Total power measured: {} \u03bcW\nPower on horizontal polarization: {} \u03bcW\nPower on vertical polarization: {} \u03bcW".format(h+v, h, v))
 
-    def OSA(self, start = None, end = None):
-        import spectral_analysis as sa
+    def OSA(self, start = None, end = None, show_plot = True):
 
         Y = self.hor.Y*np.conjugate(self.hor.Y) + self.ver.Y*np.conjugate(self.ver.Y)
         spectr = spectrum(self.hor.X, Y, "freq", "intensity")
         spectr.spacing = np.abs(spectr.spacing)
-        sa.plot(spectr, title = "OSA", start = start, end = end, color = "green")
+        if show_plot:
+            plot(spectr, title = "OSA", start = start, end = end, color = "green")
         
         return spectr
 
@@ -1643,11 +1827,6 @@ def measurement(centre = 1550, span = 10):
     '''
     Performs single measurement with OSA and returns it as \"spectrum\" class object. \"centre\" and \"span\" are in nm. 
     '''
-    import pyvisa
-    import pylab as plt
-    import numpy as np
-    import spectral_analysis as sa
-    from pyvisa.constants import VI_FALSE, VI_ATTR_SUPPRESS_END_EN, VI_ATTR_SEND_END_EN
 
     rm = pyvisa.ResourceManager()
     osa = rm.open_resource("TCPIP0::10.33.8.140::1045::SOCKET")
@@ -1676,7 +1855,7 @@ def measurement(centre = 1550, span = 10):
     intensity = np.asarray(intensity)
     intensity = [float(i) for i in intensity]
 
-    osa_spectrum = sa.spectrum(Lambda, intensity, "wl", "intensity")
+    osa_spectrum = spectrum(Lambda, intensity, "wl", "intensity")
     return osa_spectrum
 
 
@@ -1684,10 +1863,6 @@ def OSA(centre = 1550, span = 10, plot_size = [10, 10]):
     '''
     Plots continuous in time spectrum from OSA. \"plot_size\" is tuple of dimensions of image to be shown in cm
     '''
-    import matplotlib.pyplot as plt
-    import spectral_analysis as sa
-    from IPython.display import display, clear_output
-    import time
 
     fig, ax = plt.subplots(fig_size = [plot_size[0]/2.54, plot_size[1]/2.54])
 
@@ -1696,7 +1871,7 @@ def OSA(centre = 1550, span = 10, plot_size = [10, 10]):
         current_time = time.time()
         if current_time - start_time > 1800:
             raise RuntimeWarning("Measurement lasted longer than 0.5h.")
-        pure_spectrum = sa.measurement(centre = centre, span = span)
+        pure_spectrum = measurement(centre = centre, span = span)
         ax.clear()
         ax.plot(pure_spectrum.X, pure_spectrum.Y, color = "red")
         ax.set_title("OSA")
@@ -1720,16 +1895,21 @@ def spider(phase_spectrum,
            phase_borders = None,
            what_to_return = None,
            smoothing_period = None,
-           find_shear = "least squares",
+           improve_resolution = 1,
+           find_shear = "slope",
            sheared_is_bigger = True,
+           fiber_length = 0,
+           temp_phase_param = 0,
+           cut_here = None,
            plot_steps = False, 
+           plot_phase_inter = False,
            plot_phase = True,
            plot_shear = False, 
            plot_pulse = False):
     '''
-    Performs SPIDER algorithm.
+    ## Performs SPIDER algorithm.
 
-    ARGUMENTS:
+    ### ARGUMENTS:
 
     phase_spectrum - spectrum with interference pattern created in a SPIDER setup. 
         It should be either spectrum object with wavelength or frequency in X-column OR path of .csv file with that data.
@@ -1737,39 +1917,51 @@ def spider(phase_spectrum,
     temporal_spectrum - analogous to phase_spectrum, but measured with EOPM off.
 
     shear - spectral shear applied by EOPM given in frequency units (default THz). 
-        If \"None\", then shear is estimated using fourier filtering.
+        If \"None\", then shear is estimated using fourier filtering - which will be probably highly inaccurate.
 
     intensity_spectrum - amplitude of initial not interfered pulse. Similar as "phase_spectrum" it might be either a spectrum object or pathname. 
         If "None", then its approximation derived from SPIDER algorithm is used.  
     
-    phase_borders - specify range of frequencies (in THz), where you want to find spectral phase. 
+    phase_borders - specify range of frequencies (in THz), where you want to find spectral phase. It should be a tuple looking like (start, end).
         If to big, boundary effects may appear. If "None", the borders are estimated by calculating quantiles of intensity.
 
     what_to_return - if None, then RETURNS nothing. If "pulse", then RETURNS spectrum with reconstructed pulse. 
-        If "phase", then RETURNS tuple with two spectra - phase and interpolated phase. If "phase_diff", then RETURNS the spectrum with
-        spectral phase difference. If "FT", then RETURNS the spectrum withFourier transform of the OSA spectrum.
+        If "phase", then RETURNS the interpolated phase. If "phase_diff", then RETURNS the spectrum with
+        spectral phase difference. If "FT", then RETURNS the spectrum with Fourier transform of the OSA spectrum.
+        If "IFT", then RETURNS the spectrum with inverse Fourier transform of the filtered spectrum.
 
     smoothing_period - if None, nothing happens. Otherwise the phase difference is smoothed by taking 
         a moving average within an interval of smoothing_period.
     
-    find_shear - method of finding shear. If "center of mass", then shift of center of mass between sheared and non-sheared spectrum is computed. 
-        If "least_squares", then shear is found as value of shift minimizing squared difference between spectra. If "slope", then finds the first argument,
-        where spectrum reaches 0.1 of maximum, 0.11 of maximum, etc. Shear is estimated as mean of shifts of these points.
+    improve_resolution - at the very beginning of the code, how many times do you want the resolution increased. This is achieved by zero-padding.     
+        
+    find_shear - method of finding shear. NOTE: This argument refers to part of code, which is NOT used, unless shear = None.
+        If "center of mass", then shift of center of mass between sheared and non-sheared spectrum is computed. 
+        If "least_squares", then shear is found as value of shift minimizing squared difference between spectra. 
+        If "slope", then finds the first argument, where spectrum reaches 0.1 of maximum, 0.11 of maximum, etc. Shear is estimated as mean of shifts of these points. 
+        If "rect", then rectangles are fitted to the both spectra, and the shear is computed as the mean of shifts of both its sides.
+
+    sheared_is_bigger - if the intensity of the sheared polarization in phase_spectrum (being the mixture of polarization) is bigger
+        than the intensity of the non-sheared polarization. NOTE: This argument refers to part of code, which is NOT used, unless shear = None.    
+
+    fiber_length - the total length [in meters] of all silica fibers used in the setup BEFORE the electro-optic modulator
+
+    temp_phase_param - governs the size of temporal (linear) phase to be subtracted from the phase spectrum. 
+        \"temp_phase_param\" denotes the number that is subtracted from the phase in the left-most part of spectrum. 
+
+    cut_here - if None, then the delay between both pulses is estimated and - while filtering - only the part of the spectrum within range (delay/2, infinity)
+        is being kept. By writing "cut_here = (a, b)" you force that this range is exactly (a, b).
 
     plot_steps - if to plot all intermediate steps of the SPIDER algorithm.
 
+    plot_phase_inter - if to plot the intermediate phase plots.
+
     plot_phase - if to plot the found spectral phase.
 
-    plot shear - if to plot the spectra used to find the shear.
+    plot_shear - if to plot the spectra used to find the shear.
 
     plot_pulse - if to plot the reconstructed pulse.
     '''
-
-    import pandas as pd
-    import numpy as np
-    from math import floor as flr
-    import spectral_analysis as sa
-    import matplotlib.pyplot as plt
 
     # load data - spider
 
@@ -1777,7 +1969,7 @@ def spider(phase_spectrum,
         p_spectrum = phase_spectrum.copy()
 
     elif isinstance(phase_spectrum, str):
-        p_spectrum = sa.load_csv(phase_spectrum)    
+        p_spectrum = load_csv(phase_spectrum)    
 
     else:
         raise Exception("Wrong \"phase_spectrum\" format.")
@@ -1788,26 +1980,28 @@ def spider(phase_spectrum,
         t_spectrum = temporal_spectrum.copy()
 
     elif isinstance(temporal_spectrum, str):
-        t_spectrum = sa.load_csv(temporal_spectrum)    
+        t_spectrum = load_csv(temporal_spectrum)    
 
     else:
         raise Exception("Wrong \"temporal_spectrum\" format.")
 
     # zero padding
 
-    t_spectrum.zero_padding(3)
-    p_spectrum.zero_padding(3)
+    t_spectrum.insert_zeroes(3)
+    p_spectrum.insert_zeroes(3)
+    t_spectrum.increase_resolution(improve_resolution)
+    p_spectrum.increase_resolution(improve_resolution)
 
     # plot OSA
 
-    min_wl = p_spectrum.quantile(0.1)
-    max_wl = p_spectrum.quantile(0.9)
+    min_wl = p_spectrum.comp_quantile(0.1)
+    max_wl = p_spectrum.comp_quantile(0.9)
     delta = (max_wl - min_wl)
     min_wl -= delta
     max_wl += delta 
 
     if plot_steps:
-        sa.plot(p_spectrum, "orange", title = "Data from OSA", start = min_wl, end = max_wl)
+        plot(p_spectrum, "orange", title = "Data from OSA", start = min_wl, end = max_wl)
 
     # transform X-axis to frequency
 
@@ -1816,19 +2010,19 @@ def spider(phase_spectrum,
     if p_spectrum.x_type == "wl":
         s_freq = p_spectrum.wl_to_freq(inplace = False)
         s_freq.constant_spacing()
-        min_freq = s_freq.quantile(0.1)
-        max_freq = s_freq.quantile(0.9)
+        min_freq = s_freq.comp_quantile(0.1)
+        max_freq = s_freq.comp_quantile(0.9)
         delta = (max_freq - min_freq)
         min_freq -= delta
         max_freq += delta
         if plot_steps: 
-            sa.plot(s_freq,"orange", title = "Wavelength to frequency", start = min_freq, end = max_freq)
+            plot(s_freq,"orange", title = "Wavelength to frequency", start = min_freq, end = max_freq)
 
     elif p_spectrum.x_type == "freq":
         s_freq = p_spectrum
         # we need following lines, because we want in every case have min_freq and max_freq defined for later
-        min_freq = s_freq.quantile(0.1)
-        max_freq = s_freq.quantile(0.9)
+        min_freq = s_freq.comp_quantile(0.1)
+        max_freq = s_freq.comp_quantile(0.9)
         delta = (max_freq - min_freq)
         min_freq -= delta
         max_freq += delta
@@ -1845,7 +2039,7 @@ def spider(phase_spectrum,
         s_freq_t = t_spectrum
 
     # fourier transform
-
+        
     s_ft = s_freq.fourier(inplace = False)         # spider
     s_ft_t = s_freq_t.fourier(inplace = False)     # temporal
 
@@ -1853,50 +2047,66 @@ def spider(phase_spectrum,
     s_shear_t = s_ft_t.copy()
     s_intens = s_ft_t.copy()    # and this will be used to reconstruct the pulse
 
-    min_time = s_ft.quantile(0.1)
-    max_time = s_ft.quantile(0.9)
+    min_time = s_ft.comp_quantile(0.1)
+    max_time = s_ft.comp_quantile(0.9)
     delta = (max_time-min_time)/3
     min_time -= delta
     max_time += delta
-   
+
+    if max_time > 250:  # fix if quantiles don't work properly
+        max_time = 250
+        min_time = -250
+
     if plot_steps: 
-        sa.plot(s_ft, title = "Fourier transformed", start = min_time, end = max_time) 
+        plot(s_ft, title = "Fourier transformed", start = min_time, end = max_time) 
 
     # estimate time delay
-    
+
     period = s_freq_t.find_period(1/3+2/3*(1-s_freq_t.visibility()))[0] # look for the fringes in 1/3 distance between visibility level and max intensity
     delay = 1/period
 
     # find exact value of time delay
 
+    zero_right_site = False
+
     s_ft2 = s_ft.copy()
     s_ft_return = s_ft.copy()        # if you wish it to return it later
     s_ft2.replace_with_zeros(end = delay*0.5)
-    s_ft2.replace_with_zeros(start = delay*1.5)
+    if zero_right_site: s_ft2.replace_with_zeros(start = delay*1.5)
     idx = s_ft2.Y.argmax()
+
     if isinstance(idx, np.ndarray): 
         idx = idx[0]
     delay2 = s_ft.X[idx]
 
+    if delay2 < 10: # if it failed to found automatically a big enough delay
+        delay2 = 100
+
     # and filter the spectrum to keep only one of site peaks
-    
-    s_ft.replace_with_zeros(end = delay2*0.5)           # spider
-    s_ft.replace_with_zeros(start = delay2*1.5)
-    s_ft_t.replace_with_zeros(end = delay2*0.5)         # temporal
-    s_ft_t.replace_with_zeros(start = delay2*1.5)
+
+    if cut_here == None:
+        s_ft.replace_with_zeros(end = delay2*0.5)           # spider
+        s_ft_t.replace_with_zeros(end = delay2*0.5)         # temporal
+    else:
+        if cut_here[0] != None:
+            s_ft.replace_with_zeros(end = cut_here[0])           # spider
+            s_ft_t.replace_with_zeros(end = cut_here[0])         # temporal
+        if cut_here[1] != None:
+            s_ft.replace_with_zeros(start = cut_here[1])           # spider
+            s_ft_t.replace_with_zeros(start = cut_here[1])         # temporal
 
     if plot_steps: 
-        sa.plot(s_ft, title = "Filtered (absolute value)", start = -2*delay2, end = 2*delay2, what_to_plot = "abs")
+        plot(s_ft, title = "Filtered (absolute value)", start = -2*delay2, end = 2*delay2, what_to_plot = "abs")
 
     # let's find the shear
     
     if shear == None:
 
         s_shear.replace_with_zeros(start = None, end = -delay2*0.5)         # spider
-        s_shear.replace_with_zeros(start = delay2*0.5, end = None)
+        if zero_right_site: s_shear.replace_with_zeros(start = delay2*0.5, end = None)
         
         s_shear_t.replace_with_zeros(start = None, end = -delay2*0.5)       # temporal
-        s_shear_t.replace_with_zeros(start = delay2*0.5, end = None)
+        if zero_right_site: s_shear_t.replace_with_zeros(start = delay2*0.5, end = None)
 
         s_shear.inv_fourier()
         s_shear_t.inv_fourier()
@@ -1904,7 +2114,7 @@ def spider(phase_spectrum,
         s_shear.Y = np.abs(s_shear.Y)
         s_shear_t.Y = np.abs(s_shear_t.Y)
 
-        mu = sa.ratio(t_spectrum.visibility())
+        mu = ratio(t_spectrum.visibility())
         if sheared_is_bigger:
             s_shear_t.Y /= (1+mu)
             s_shear.Y -= (mu*s_shear_t.Y)
@@ -1914,27 +2124,32 @@ def spider(phase_spectrum,
             s_shear.Y /= mu
         
         if find_shear == "least squares":
-            shear = sa.find_shift(s_shear, s_shear_t)
+            shear = find_shift(s_shear, s_shear_t)
         elif find_shear == "center of mass":
-            shear = s_shear.quantile(1/2) - s_shear_t.quantile(1/2)
+            shear = s_shear.comp_quantile(1/2) - s_shear_t.comp_quantile(1/2)
         elif find_shear == "slope":
-            shear = sa.find_slope_shift(s_shear, s_shear_t)
+            shear = find_slope_shift(s_shear, s_shear_t)
+        elif find_shear == "rect":
+            params_s = fit_rect_smart(s_shear, output = "params")
+            params_ns = fit_rect_smart(s_shear_t, output = "params")
+            shear = np.mean([params_s[0]-params_ns[0], params_s[1]-params_ns[1]])        
         else:
-            raise Exception("\"find_shear\" must be either \"least squares\", \"center of mass\" or \"slope\".")
+            raise Exception("\"find_shear\" must be either \"least squares\", \"center of mass\", \"slope\" or \"rect\".")
         
         shear = np.abs(shear)
         
         if shear == 0:
             raise Exception("Failed to find non zero shear.")
         if plot_shear:
-            sa.compare_plots([s_shear, s_shear_t], 
-                             start = 1.5*s_shear.quantile(0.05), 
-                             end = 1.5*s_shear.quantile(0.95), 
+            compare_plots([s_shear, s_shear_t], 
+                             start = 1.5*s_shear.comp_quantile(0.05), 
+                             end = 1.5*s_shear.comp_quantile(0.95), 
                              abs = True, 
                              title = "Shear of {} THz".format(round(shear,5)),
                              legend = ["Sheared", "Not sheared"])
 
-    integrate_interval = flr(np.abs(shear)/(s_freq_for_later.spacing))
+    integrate_interval = ceil(np.abs(shear)/(s_freq_for_later.spacing))
+    scale_correction = 1/((np.abs(shear)/(integrate_interval*s_freq_for_later.spacing)))
     mean = np.mean(s_freq_for_later.X)
 
     # inverse fourier
@@ -1944,13 +2159,13 @@ def spider(phase_spectrum,
     if plot_steps:
         s_ift2 = s_ift.copy()
         s_ift2.X += np.real(mean) 
-        sa.plot(s_ift2, title = "Inverse Fourier transformed", start = min_freq, end = max_freq, what_to_plot = "abs")
+        plot(s_ift2, title = "Inverse Fourier transformed", start = min_freq, end = max_freq, what_to_plot = "abs")
 
     # cut spectrum to area of significant phase
 
     if phase_borders == None:
-        min_phase = s_ift.quantile(0.05)
-        max_phase = s_ift.quantile(0.95)
+        min_phase = s_ift.comp_quantile(0.02)
+        max_phase = s_ift.comp_quantile(0.98)
 
     else:
         min_phase = phase_borders[0] - mean
@@ -1971,16 +2186,15 @@ def spider(phase_spectrum,
     # extract phase
 
     values = phase_values - temporal_phase
-    values = np.unwrap(values)
+    plt.show()
+    values = ((values + np.pi)%(2*np.pi) -np.pi)
     values -= np.mean(values)
-    #values -= values[0]             # deletes linear aberration in phase
+    plt.show()
 
     if smoothing_period != None:
-        V = sa.spectrum(X_sampled, values, "freq", "phase")
+        V = spectrum(X_sampled, values, "freq", "phase")
         V.moving_average(smoothing_period)
         values = V.Y
-
-    #values -= values[flr(len(values)/2)]    # without that line, spectral phase will later always start at zero and grow
 
     # prepare data to plot
     
@@ -1990,7 +2204,7 @@ def spider(phase_spectrum,
     # plot phase difference
 
     diff_spectrum = spectrum(X_sampled, values, "freq", "phase")    # if you wish to return it later
-    if plot_phase:
+    if plot_phase_inter:
 
         plt.scatter(X_sampled, np.real(values), color = "orange", s = 1)
         if smoothing_period == None:
@@ -2010,7 +2224,7 @@ def spider(phase_spectrum,
         s_intens.replace_with_zeros(start = 0.5*delay2)
 
         intensity = s_intens.inv_fourier(inplace = False)
-        mu = sa.ratio(t_spectrum.visibility())
+        mu = ratio(t_spectrum.visibility())
         intensity.Y /= (1+mu)
         intensity.cut(min_phase, max_phase)
         intensity.X += mean + shear
@@ -2019,12 +2233,13 @@ def spider(phase_spectrum,
         if isinstance(intensity_spectrum, spectrum):
             intensity = intensity_spectrum
         elif isinstance(intensity_spectrum, str):
-            intensity = sa.load_csv(intensity_spectrum)
+            intensity = load_csv(intensity_spectrum)
 
         if intensity.x_type == "wl":
             intensity.wl_to_freq()
             intensity.constant_spacing()
 
+        intensity.increase_resolution(improve_resolution)
         start = np.searchsorted(intensity.X, X_continuous[0])
         num = len(X_continuous)
         end = start + num
@@ -2032,11 +2247,12 @@ def spider(phase_spectrum,
 
     # recover discrete phase
     
-    integration_start = flr((len(X_sampled) % integrate_interval)/2) # we want to extrapolate equally on both sides
+    integration_start = floor((len(X_sampled) % integrate_interval)/2) # we want to extrapolate equally on both sides
 
     X_sampled = X_sampled[integration_start::integrate_interval]
 
     values = values[integration_start::integrate_interval]
+    values = values*scale_correction # correction if the shear is not a multiple of spacing
     Y_sampled = np.cumsum(values)
 
     if shear < 0: 
@@ -2048,10 +2264,10 @@ def spider(phase_spectrum,
 
     # firstly initial interpolation to translate spectrum to X-axis (global phase standarization)
 
-    interpolated_phase_first = sa.interpolate(phase_spectrum_first, X_continuous)
+    interpolated_phase_first = interpolate(phase_spectrum_first, X_continuous)
     Y_continuous = interpolated_phase_first.Y
 
-    if np.mean(Y_continuous) > Y_continuous[flr(len(Y_continuous)/2)]:
+    if np.mean(Y_continuous) > Y_continuous[floor(len(Y_continuous)/2)]:
         Y_sampled -= np.min(Y_continuous)
     else:
         Y_sampled -= np.max(Y_continuous)
@@ -2060,16 +2276,42 @@ def spider(phase_spectrum,
 
     # proper interpolation
 
-    interpolated_phase = sa.interpolate(phase_spectrum, X_continuous)
-    interpolated_phase_zeros = interpolated_phase.zero_padding(3, inplace = False)  
+    interpolated_phase = interpolate(phase_spectrum, X_continuous)
+    interpolated_phase_zeros = interpolated_phase.insert_zeroes(3, inplace = False)
+
+    # plot intermediate phase plots
+
+    if plot_phase_inter:
+        plt.scatter(X_sampled, Y_sampled, color = "orange", s = 20)
+        plt.plot(interpolated_phase.X, interpolated_phase.Y, color = "green")
+        plt.title("Phase with offset introduced by fiber")
+        plt.legend(["Phase reconstructed from SPIDER", "Interpolated phase"], bbox_to_anchor = [1, 1])
+        plt.xlabel("Frequency [THz]")
+        plt.ylabel("Spectral phase [rad]")
+        plt.grid()
+        plt.show()
 
     # plot phase
 
+    interpolated_phase.Y = interpolated_phase.Y - chirp_phase(bandwidth = [interpolated_phase.X[0], interpolated_phase.X[-1]],
+                                                              centre = interpolated_phase.X[floor(len(interpolated_phase)/2)],
+                                                              fiber_length = fiber_length,
+                                                              num = len(interpolated_phase))
+    
+    interpolated_phase.remove_temporal_phase(temp_phase_param)
+
     if plot_phase:
-        plt.scatter(X_sampled, Y_sampled, color = "orange", s = 20)
-        plt.plot(interpolated_phase.X, interpolated_phase.Y, color = "green")
-        plt.title("Spectral phase of original pulse")
-        plt.legend(["Phase reconstructed from SPIDER", "Interpolated phase"], bbox_to_anchor = [1, 1])
+
+        discrete_Y = np.array([interpolated_phase.Y[np.searchsorted(interpolated_phase.X, x)] for x in X_sampled])
+
+        plt.plot(interpolated_phase.X, interpolated_phase.Y - np.min(interpolated_phase.Y), color = "darkorange", zorder = 5)
+        plt.scatter(X_sampled, discrete_Y - np.min(interpolated_phase.Y), color = "green", zorder = 10, s = 9)
+        plt.fill_between(intensity.X, np.abs(intensity.Y/np.max(np.abs(intensity.Y))*np.max(np.abs(interpolated_phase.Y))), 
+            color = "darkviolet", 
+            alpha = 0.5, 
+            zorder = 0)
+        plt.title("Phase reconstruction")
+        plt.legend(["Interpolated spectral phase", "Reconstructed spectral phase", "Spectral intensity"], bbox_to_anchor = [1,1])
         plt.xlabel("Frequency [THz]")
         plt.ylabel("Spectral phase [rad]")
         plt.grid()
@@ -2077,27 +2319,29 @@ def spider(phase_spectrum,
 
     # extract the pulse
 
-    intensity.zero_padding(3)
-    pulse = sa.recover_pulse(interpolated_phase_zeros, intensity)
+    intensity.insert_zeroes(3)
+    pulse = recover_pulse(interpolated_phase_zeros, intensity)
 
     if plot_pulse:
-        min_pulse = pulse.quantile(0.25)
-        max_pulse = pulse.quantile(0.75)
+        min_pulse = pulse.comp_quantile(0.25)
+        max_pulse = pulse.comp_quantile(0.75)
         delta = (max_pulse - min_pulse)*3
 
-        sa.plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "real")
+        plot(pulse, color = "red", title = "Recovered pulse", start = min_pulse - delta, end = max_pulse + delta, what_to_plot = "real")
 
     # return what's needed
 
     if what_to_return == "pulse":
         return pulse
     elif what_to_return == "phase":
-        return phase_spectrum, interpolated_phase
+        return interpolated_phase
     elif what_to_return == "phase_diff":
         return diff_spectrum
     elif what_to_return == "FT":
         return s_ft_return
+    elif what_to_return == "IFT":
+        return s_ift2
     elif what_to_return == None:
         pass
     else:
-        raise Exception("\"what to return\" must be \"pulse\", \"phase\", \"phase_diff\", \"FT\" or None.")
+        raise Exception("\"what to return\" must be \"pulse\", \"phase\", \"phase_diff\", \"FT\", \"IFT\" or None.")
