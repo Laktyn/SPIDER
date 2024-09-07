@@ -1,0 +1,61 @@
+\documentclass{article}
+
+\usepackage[top=0.8in]{geometry}
+\usepackage{amsthm}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{latexsym}
+\usepackage{bm}
+\usepackage{xcolor}
+\usepackage{mathtools}
+\usepackage[toc,page]{appendix}
+\usepackage{titlesec}
+\usepackage{bbm}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{subcaption}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{problem}[theorem]{Problem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{fact}[theorem]{Fact}
+\newtheorem{post}[theorem]{Postulate}
+
+\newcommand{\plot}[1]{
+\begin{center}
+\textcolor{blue}{\textbf{#1}}
+\end{center}
+}
+
+\begin{document}
+\title{SPIDER: How To Do It In Three Steps}
+\maketitle
+\thispagestyle{empty}
+\noindent
+\textbf{STEP ONE:} Back to the game.
+\begin{enumerate}
+	\item Rebulid the system and reproduce the results of measurements made with OSA.
+	\item Reproduce the results of measurements made with APEX.
+\end{enumerate}
+\textbf{STEP TWO:} Verify if APEX-based SPIDER could work at all.\\ \\
+\textbf{Problem:} APEX is extremely noisy for light of power $<1\mu$W and in the areas of low intensity. For instance, it cannot measure the phase jump in the middle of the first Hermite-Gaussian spectral mode.
+\begin{enumerate}
+	\item Consider using an erbium-doped fiber amplifier just before APEX to increase the intensity.
+	\item Measure the phase jump in the area of high intensity - \emph{someone} needs to teach me how to use the pulse shaper.
+	\item If noise is random, consider taking the mean of several measurements. If there is a pattern in the noise, consider removing it in post-processing.
+	\item In order to maximize the resolution try to miminze the width of the peak in the \emph{spectral phase difference} plot measured for the case of \emph{signum}-like spectral phase. Identify how does this width depend on all the other factors.
+\end{enumerate}
+\textbf{STEP THREE:} If APEX-based SPIDER could work, optimize everything.
+\begin{enumerate}
+	\item Write Python software connected to OSA, which examines in real-time if the spectral shift introduced by the EOPM is fully homogeneous or - equivalenty - if the slope of the current supplied to the photodiode is constant. Alternatively, use the AWG to apply the saw-like signal.
+	\item Measure the dispersion of the PM fiber in order to optimize the subtraction of the parabolic phase. I want to measure the $D_\lambda$ parameter with an accuracy of 3 significant figures.
+	\item Reduce the noise in the signal. Realign the axes in the EOPM to match the axes of the PM fibers in order to eliminate the oscillations with period of 65 GHz. Identify other sources of noise and try to eliminate them.
+	\item Make a series of measurements examining whether the amount of parabolic chirping phase in the spectral phase can be fully deduced from the length of the delaying fiber alone. If it can't, find the method to estimate this quantity.
+	\item At the same time clean up the code.
+\end{enumerate}
+
+\end{document}

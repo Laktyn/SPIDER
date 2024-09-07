@@ -276,7 +276,10 @@ class spectrum:
 
         # prepare input
 
+        time = self.X.copy()
         intens = self.Y.copy()
+
+        time = ifftshift(time)
         intens = ifftshift(intens)
 
         # Fourier Transform
@@ -595,32 +598,10 @@ class spectrum:
             return spectrum_safe
 
 
-    def shorten(self, length, inplace = True):
+    def comp_quantile(self, q, norm = "L1"):
         '''
-        ### Delete \"length\" points on the left and on the right of the spectrum.
-        '''
-        
-        left_start = self.X[0] - self.spacing*length
-        left_X = np.linspace(left_start, self.X[0], endpoint = False, num = length - 1)
-        left_Y = np.zeros(length - 1)
-
-        right_end = self.X[-1] + self.spacing*length
-        right_X = np.linspace(self.X[-1] + self.spacing, right_end, endpoint = True, num = length - 1)
-        right_Y = np.zeros(length-1)
-
-        new_X = np.concatenate([left_X, self.X.copy(), right_X])
-        new_Y = np.concatenate([left_Y, self.Y.copy(), right_Y])
-
-        if inplace == True:
-            self.X = new_X
-            self.Y = new_Y
-        if inplace == False:
-            return spectrum(new_X, new_Y, self.x_type, self.y_type)
-
-
-    def comp_quantile(self, q, norm):
-        '''
-        ### Finds x in X axis such that integral of intensity to x is fraction of value \"q\" of whole intensity. The\"norm\" is either \"L1\" or \"L2\".
+        ### Finds x in X axis such that the integral of the intensity to the \"x\" is fraction of value \"q\" of whole intensity. 
+        The\"norm\" is either \"L1\" or \"L2\".
         '''
         if norm not in ["L1", "L2"]:
             raise Exception("The norm must be either \"L1\" or \"L2\".")
@@ -1107,7 +1088,7 @@ def fit_rect_smart(spectr, output = "params"):
     left_axis = s_safe.Y[start_idx: mid_idx].copy()
     right_axis = s_safe.Y[mid_idx: end_idx].copy()
 
-    # we will compute the left and right side od rectangle in a smart way, but we need to use a brute force to compute the height
+    # we will compute the left and right side od rectangle in a smart wat, but we need to use a brute force to compute the height
     
     height_sample_rate = 1000
     delta = np.mean(spectr.cut(start, end, inplace = False).Y)/height_sample_rate
@@ -1462,6 +1443,45 @@ def recover_pulse(phase_spectrum, intensity_spectrum):
     return pulse_spectrum
 
 
+def find_shift(spectrum_1, spectrum_2):
+    '''
+    ### Returns translation between two spectra in THz. 
+    Spectra in wavelength domain are at first transformed into frequency domain.
+    Least squares is loss function to be minimized. Shift is found by brute force: 
+    checking number of shifts equal to number of points on X axis.
+    '''
+
+    spectrum1 = spectrum_1.copy()
+    spectrum2 = spectrum_2.copy()
+
+    if len(spectrum1) != len(spectrum2):
+        raise Exception("Spectra are of different length.")
+
+    if spectrum1.x_type == "wl":
+
+        spectrum1.wl_to_freq()
+        spectrum1.constant_spacing()
+
+    if spectrum2.x_type == "wl":
+
+        spectrum2.wl_to_freq()
+        spectrum2.constant_spacing()
+
+    def error(v_1, v_2):
+        return np.sum(np.abs(v_1 - v_2)**2)
+    
+    minimum = np.sum(np.abs(spectrum1.Y)**2)
+    idx = 0
+    width = np.max(np.array([spectrum1.comp_FWHM(), spectrum2.comp_FWHM()]))
+    index_width = floor(width/spectrum1.spacing)
+    for i in range(-index_width, index_width):
+         if minimum > error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i)):
+             minimum = error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i))
+             idx = i
+    
+    return spectrum1.spacing*idx
+
+
 def ratio(vis_value):
     '''
     Given visibility of interference fringes in spectrum, the function returns ratio of intensities of two pulses that 
@@ -1546,43 +1566,6 @@ def chirp_phase(bandwidth, centre, fiber_length, num):
     return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
 
 
-def find_shift_mse(spectrum_1, spectrum_2):
-    '''
-    ### Returns translation between two spectra in THz. 
-    Spectra in wavelength domain are at first transformed into frequency domain.
-    Least squares is loss function to be minimized. Shift is found by brute force: 
-    checking number of shifts equal to number of points on X axis.
-    '''
-
-    spectrum1 = spectrum_1.copy()
-    spectrum2 = spectrum_2.copy()
-
-    if len(spectrum1) != len(spectrum2):
-        raise Exception("Spectra are of different length.")
-
-    if spectrum1.x_type == "wl":
-        spectrum1.wl_to_freq()
-        spectrum1.constant_spacing()
-
-    if spectrum2.x_type == "wl":
-        spectrum2.wl_to_freq()
-        spectrum2.constant_spacing()
-
-    def error(v_1, v_2):
-        return np.sum(np.abs(v_1 - v_2)**2)
-    
-    minimum = np.sum(np.abs(spectrum1.Y)**2)
-    idx = 0
-    width = np.max(np.array([spectrum1.comp_FWHM(), spectrum2.comp_FWHM()]))
-    index_width = floor(width/spectrum1.spacing)
-    for i in range(-index_width, index_width):
-         if minimum > error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i)):
-             minimum = error(spectrum1.Y, np.roll(a = spectrum2.Y, shift = i))
-             idx = i
-    
-    return spectrum1.spacing*idx
-
-
 def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0.5, sampl_num = 500):
     '''
     ### Find relative shift between the spectra by computing the shift of the slope. 
@@ -1642,57 +1625,6 @@ def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0
     right_shift = np.mean(np.array(right_s)-np.array(right_ns))
 
     return (left_shift+right_shift)/2
-
-
-def find_shift_com(spectrum_1, spectrum_2):
-    '''
-    ### Returns translation between two spectra in THz. 
-    Spectra in wavelength domain are at first transformed into the frequency domain.
-    Translation is computed as the distance between centers of mass of two spectra.
-    '''
-
-    spectrum1 = spectrum_1.copy()
-    spectrum2 = spectrum_2.copy()
-
-    if len(spectrum1) != len(spectrum2):
-        raise Exception("Spectra are of different length.")
-
-    if spectrum1.x_type == "wl":
-        spectrum1.wl_to_freq()
-        spectrum1.constant_spacing()
-
-    if spectrum2.x_type == "wl":
-        spectrum2.wl_to_freq()
-        spectrum2.constant_spacing()
-
-    return spectrum_1.comp_center() - spectrum_2.comp_center()
-
-
-def find_shift_rect(spectrum_1, spectrum_2):
-    '''
-    ### Returns translation between two spectra in THz. 
-    Spectra in wavelength domain are at first transformed into the frequency domain.
-    Translation is computed by fitting the rectangles to the spectra and later comparing the distance between their sides.
-    '''
-
-    spectrum1 = spectrum_1.copy()
-    spectrum2 = spectrum_2.copy()
-
-    if len(spectrum1) != len(spectrum2):
-        raise Exception("Spectra are of different length.")
-
-    if spectrum1.x_type == "wl":
-        spectrum1.wl_to_freq()
-        spectrum1.constant_spacing()
-
-    if spectrum2.x_type == "wl":
-        spectrum2.wl_to_freq()
-        spectrum2.constant_spacing()
-
-    params_1 = fit_rect_smart(spectrum1, output = "params")
-    params_2 = fit_rect_smart(spectrum2, output = "params")
-
-    return np.mean([params_1[0]-params_2[0], params_1[1]-params_2[1]])
 
 
 def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, normalize = False, how = "slope", show_plot = False, improve_resolution = 1):
@@ -1756,16 +1688,18 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
         not_sheared.normalize("highest", False)
 
     if how == "com":
-        shear = find_shift_com(sheared, not_sheared)
+        shear = sheared.comp_center() - not_sheared.comp_center()
 
     elif how == "fit":
-        shear = find_shift_mse(sheared, not_sheared)
+        shear = find_shift(sheared, not_sheared)
 
     elif how == "slope":
         shear = find_slope_shift(sheared, not_sheared)
 
     elif how == "rect":
-        shear = find_shift_rect(sheared, not_sheared)
+        params_s = fit_rect_smart(sheared, output = "params")
+        params_ns = fit_rect_smart(not_sheared, output = "params")
+        shear = np.mean([params_s[0]-params_ns[0], params_s[1]-params_ns[1]])
 
     if show_plot:    
         compare_plots([sheared, not_sheared], 
@@ -2199,7 +2133,7 @@ def spider(phase_spectrum,
             s_shear.Y /= mu
         
         if find_shear == "least squares":
-            shear = find_shift_mse(s_shear, s_shear_t)
+            shear = find_shift(s_shear, s_shear_t)
         elif find_shear == "center of mass":
             shear = s_shear.comp_quantile(1/2) - s_shear_t.comp_quantile(1/2)
         elif find_shear == "slope":
@@ -2292,6 +2226,22 @@ def spider(phase_spectrum,
         plt.grid()
         plt.show()
 
+    # recover discrete phase
+    
+    integration_start = floor((len(X_sampled) % integrate_interval)/2) # we want to extrapolate equally on both sides
+
+    X_sampled = X_sampled[integration_start::integrate_interval]
+
+    values = values[integration_start::integrate_interval]
+    values = values*scale_correction # correction if the shear is not a multiple of spacing
+    Y_sampled = np.cumsum(values)
+    if shear < 0: 
+        X_sampled -= shear
+        X_continuous -= shear
+        Y_sampled *= -1
+
+    phase_spectrum_first = spectrum(X_sampled, Y_sampled, "freq", "phase")
+
     # recover intensity spectrum
 
     if intensity_spectrum == None:
@@ -2301,9 +2251,12 @@ def spider(phase_spectrum,
         intensity = s_intens.inv_fourier(inplace = False)
         mu = ratio(t_spectrum.visibility())
         intensity.Y /= (1+mu)
-        intensity.cut(min_phase, max_phase)
-        intensity.X += mean + shear
-    
+        intensity.X += mean
+
+        start = np.searchsorted(intensity.X, X_continuous[0]) # this must be done with "index" method to ensure equal length of "intensity" and "X_continuous"
+        end = start + len(X_continuous)
+        intensity.cut(start = start, end = end, how = "index")
+
     else:
         if isinstance(intensity_spectrum, spectrum):
             intensity = intensity_spectrum
@@ -2315,27 +2268,10 @@ def spider(phase_spectrum,
             intensity.constant_spacing()
 
         intensity.increase_resolution(improve_resolution)
-        start = np.searchsorted(intensity.X, X_continuous[0])
-        num = len(X_continuous)
-        end = start + num
+
+        start = np.searchsorted(intensity.X, X_continuous[0]) # this must be done with "index" method to ensure equal length of "intensity" and "X_continuous"
+        end = start + len(X_continuous)
         intensity.cut(start = start, end = end, how = "index")
-
-    # recover discrete phase
-    
-    integration_start = floor((len(X_sampled) % integrate_interval)/2) # we want to extrapolate equally on both sides
-
-    X_sampled = X_sampled[integration_start::integrate_interval]
-
-    values = values[integration_start::integrate_interval]
-    values = values*scale_correction # correction if the shear is not a multiple of spacing
-    Y_sampled = np.cumsum(values)
-
-    if shear < 0: 
-        X_sampled -= shear
-        X_continuous -= shear
-        Y_sampled *= -1
-
-    phase_spectrum_first = spectrum(X_sampled, Y_sampled, "freq", "phase")
 
     # firstly initial interpolation to translate spectrum to X-axis (global phase standarization)
 
