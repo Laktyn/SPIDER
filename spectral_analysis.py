@@ -882,11 +882,11 @@ def load_tsv(filename, x_type = "wl", y_type = "intensity", source = "OSA"):
     return spectrum(spectr.values[:, 0], spectr.values[:, 1], x_type = x_type, y_type = y_type)
 
 
-def interpolate(old_spectrum, new_X):
+def interpolate(old_spectrum, new_X, how = "spline"):
     '''
     ### Interpolate rarely sampled spectrum for values in new X-axis. 
     
-    Interpolation is performed with cubic functions. If y-values to be interpolated are complex, they are casted to reals.
+    Interpolation is performed with cubic functions (\"how = spline\") or linearly (\"how = linear\"). If y-values to be interpolated are complex, they are casted to reals.
 
     ARGUMENTS:
 
@@ -902,10 +902,17 @@ def interpolate(old_spectrum, new_X):
     X = np.real(old_spectrum.X.copy())
     Y = np.real(old_spectrum.Y.copy())
 
-    model = CubicSpline(X, Y)
-    new_Y = model(np.real(new_X))
+    if how == "spline":
+        model = CubicSpline(X, Y)
+        new_Y = model(np.real(new_X))
 
-    return spectrum(new_X, new_Y, old_spectrum.x_type, old_spectrum.y_type)
+    elif how == "linear":
+        new_Y = np.array([])
+        for x in np.real(new_X):
+            idx = np.searchsorted(X, x)
+            segment = X[idx] - X[idx-1]
+            y = (X[idx] - x)*Y[idx-1]/segment + (x - X[idx-1])*Y[idx]/segment
+            new_Y.append(y)
 
 
 def create_complex_spectrum(intensity_spectrum, phase_spectrum, extrapolate = False):
