@@ -66,6 +66,7 @@ class spectrum:
         self.x_type = x_type
         self.y_type = y_type
         self.spacing = self.calc_spacing()
+        self.power = self.comp_power()
 
 
     def __len__(self):
@@ -233,6 +234,8 @@ class spectrum:
             new_Y = new_Y[s:]
         else: pass
 
+        self.power = self.comp_power()
+
         if inplace == True:
             self.X = new_X
             self.Y = new_Y
@@ -241,7 +244,7 @@ class spectrum:
             return spectrum(new_X, new_Y, self.x_type, self.y_type)
         
 
-    def fourier(self, inplace = True, force = False, abs = False):
+    def fourier(self, inplace = True, force = False, abs = False, constant_power = False):
         '''
         ### Performs Fourier Transform from \"frequency\" to \"time\" domain. 
         
@@ -257,10 +260,19 @@ class spectrum:
                 print("WARNING: Sticking to the convention you are encouraged to use the inverse Fourier transform.")
 
         # Fourier Transform
-
-        FT_intens = fftshift(self.Y.copy())
+    
+        if constant_power:
+            FT_intens = np.sqrt(np.abs(self.Y))*np.exp(1j*np.angle(self.Y)) # to ensure that the powers in time and frequency pictures are the same
+        else:
+            FT_intens = self.Y.copy()
+        FT_intens = fftshift(FT_intens)
         FT_intens = fft(FT_intens, norm = "ortho")
         FT_intens = fftshift(FT_intens)
+        if constant_power:
+            FT_intens = np.abs(FT_intens)**2*np.exp(1j*np.angle(FT_intens))
+        else:
+            pass
+
         if abs:
             FT_intens = np.abs(FT_intens)
         time = fftfreq(self.__len__(), self.spacing)
@@ -275,7 +287,7 @@ class spectrum:
             return spectrum(time, FT_intens, "time", self.y_type)
             
 
-    def inv_fourier(self, inplace = True, force = False, abs = False):
+    def inv_fourier(self, inplace = True, force = False, abs = False, constant_power = False):
         '''
         ### Performs inverse Fourier transform from \"time\" to \"frequency\" domain.
 
@@ -291,13 +303,22 @@ class spectrum:
         time = self.X.copy()
         intens = self.Y.copy()
 
-        time = ifftshift(time)
-        intens = ifftshift(intens)
 
+        time = ifftshift(time)
+        if constant_power:
+            intens = np.sqrt(np.abs(intens))*np.exp(1j*np.angle(intens)) # to ensure that the powers in time and frequency pictures are the same
+        else:
+            pass
         # Fourier Transform
 
-        FT_intens = ifft(intens, norm = "ortho")
+        FT_intens = ifftshift(intens)
+        FT_intens = ifft(FT_intens, norm = "ortho")
         FT_intens = ifftshift(FT_intens)
+        if constant_power:
+            FT_intens = np.abs(FT_intens)**2*np.exp(1j*np.angle(FT_intens))
+        else:
+            pass
+
         if abs:
             FT_intens = np.abs(FT_intens)
         freq = fftfreq(self.__len__(), self.spacing)
@@ -403,6 +424,8 @@ class spectrum:
             new_Y = np.delete(new_Y, idx)
         '''
         # return stuff
+
+        self.power = self.comp_power() # because the presence of the comb decreases measured intensity
             
         if inplace:
             self.X = new_X
@@ -495,9 +518,11 @@ class spectrum:
         new_Y = self.Y.copy()
         new_Y[s:e] = np.zeros(e-s)
 
-        if inplace == True:
+        self.power = self.comp_power()
+
+        if inplace:
             self.Y = new_Y
-        if inplace == False:
+        else:
             return spectrum(self.X, new_Y, self.x_type, self.y_type)
         
 
@@ -605,10 +630,14 @@ class spectrum:
 
         spectrum_safe.X -= (np.mean(spectrum_safe.X) - initial_mean)
 
-        if inplace == True:
+        spectrum_safe.Y = spectrum_safe.Y/np.max(spectrum_safe.Y)   # thats not that smart fix
+        spectrum_safe.Y = spectrum_safe.Y*np.max(self.Y)
+
+        if inplace:
             self.X = spectrum_safe.X
             self.Y = spectrum_safe.Y
-        if inplace == False:
+            self.spacing = self.calc_spacing()
+        else:
             return spectrum_safe
 
 
@@ -716,7 +745,7 @@ class spectrum:
         self.Y = self.Y + Y
 
 
-    def power(self):
+    def comp_power(self):
         '''
         ### Power of a spectrum. 
         
@@ -729,7 +758,7 @@ class spectrum:
                 return 0
             return round(x, -int(floor(log10(abs(x)))) + n - 1)
     
-        return round_to_dig(np.sum(self.X*np.conjugate(self.X)), 3)
+        return round_to_dig(np.sum(np.sqrt(self.Y*np.conjugate(self.Y))), 5)
         
 
     def comp_FWHM(self):
@@ -1436,9 +1465,9 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
         p_per_unit = str(p_per_unit)
 
     if to_cut:
-        plt.text(1.05, 0.75, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": " + p_per_unit + "\nFull X-axis range: {} - {} ".format(inf, sup) + unit  + "\nCentroid: {} ".format(round_to_dig(spectrum_safe.comp_quantile(0.5), 5)) + unit + "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit, transform = ax.transAxes)
+        plt.text(1.05, 0.65, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": " + p_per_unit + "\nFull X-axis range: {} - {} ".format(inf, sup) + unit  + "\nCentroid: {} ".format(round_to_dig(spectrum_safe.comp_quantile(0.5), 5)) + unit + "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit + "\nPower: {}".format(round_to_dig(spectrum_safe.comp_power(), 5)), transform = ax.transAxes)
     else:
-        plt.text(1.05, 0.8, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": " + p_per_unit + "\nCentroid: {} ".format(round_to_dig(spectrum_safe.comp_quantile(0.5), 5), 5) + unit + "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit, transform = ax.transAxes)
+        plt.text(1.05, 0.7, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": " + p_per_unit + "\nCentroid: {} ".format(round_to_dig(spectrum_safe.comp_quantile(0.5), 5), 5) + unit + "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit + "\nPower: {}".format(round_to_dig(spectrum_safe.comp_power(), 5)), transform = ax.transAxes)
 
     if save:
         plt.savefig("{}.jpg".format(title))
