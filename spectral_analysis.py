@@ -44,8 +44,8 @@ class spectrum:
 
         if x_type not in ["time", "THz", "nm", "kHz", "Hz"]:
             raise Exception("x_type must be either \"time\" or \"THz\", \"kHz\", \"Hz\" or \"nm\".")
-        if y_type not in ["phase", "intensity", "complex_ampl", "e-field"]:
-            raise Exception("y_type must be either \"phase\", \"intensity\" or \"complex_ampl\" or \"e-field\".")
+        if y_type not in ["phase", "intensity", "complex_ampl", "e-field", "current"]:
+            raise Exception("y_type must be either \"phase\", \"intensity\", \"complex_ampl\", \"e-field\" or \"current\".")
         if len(X) != len(Y):
             raise Exception("X and Y axis must be of the same length.")
         
@@ -241,7 +241,7 @@ class spectrum:
             return spectrum(new_X, new_Y, self.x_type, self.y_type)
         
 
-    def fourier(self, inplace = True, force = False):
+    def fourier(self, inplace = True, force = False, abs = False):
         '''
         ### Performs Fourier Transform from \"frequency\" to \"time\" domain. 
         
@@ -261,6 +261,8 @@ class spectrum:
         FT_intens = fftshift(self.Y.copy())
         FT_intens = fft(FT_intens, norm = "ortho")
         FT_intens = fftshift(FT_intens)
+        if abs:
+            FT_intens = np.abs(FT_intens)
         time = fftfreq(self.__len__(), self.spacing)
         time = fftshift(time)
 
@@ -273,7 +275,7 @@ class spectrum:
             return spectrum(time, FT_intens, "time", self.y_type)
             
 
-    def inv_fourier(self, inplace = True, force = False):
+    def inv_fourier(self, inplace = True, force = False, abs = False):
         '''
         ### Performs inverse Fourier transform from \"time\" to \"frequency\" domain.
 
@@ -296,6 +298,8 @@ class spectrum:
 
         FT_intens = ifft(intens, norm = "ortho")
         FT_intens = ifftshift(FT_intens)
+        if abs:
+            FT_intens = np.abs(FT_intens)
         freq = fftfreq(self.__len__(), self.spacing)
         freq = fftshift(freq)
 
@@ -721,6 +725,8 @@ class spectrum:
 
         # simple function to round to significant digits
         def round_to_dig(x, n):
+            if x == 0:
+                return 0
             return round(x, -int(floor(log10(abs(x)))) + n - 1)
     
         return round_to_dig(np.sum(self.X*np.conjugate(self.X)), 3)
@@ -735,19 +741,24 @@ class spectrum:
 
         left = None
         right = None
-        peak = np.max(self.Y)
+        peak = np.max(np.abs(self.Y))
+
         for idx, y in enumerate(self.Y):
-            if y >= peak/2:
+            if np.abs(y) >= peak/2:
                 left = idx
+                break
+
         for idx, y in enumerate(np.flip(self.Y)):
-            if y >= peak/2:
+            if np.abs(y) >= peak/2:
                 right = self.__len__() - idx
+                break
+
         if self.__len__() == 0:
             raise Exception("Failed to calculate FWHM, because spectrum is empty.")
         if self.__len__() < 5:
             raise Exception("The spectrum consists of too little data points to calculate FWHM.")
         if left == None or right == None:
-            raise Exception("Failed to calculate FWHM due to very strange error.")
+            return 0
         width = right-left
         width *= self.spacing
 
@@ -1312,6 +1323,8 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
     # simple function to round to significant digits
 
     def round_to_dig(x, n):
+        if x == 0:
+            return 0
         return round(x, -int(floor(log10(abs(x)))) + n - 1)
 
     # invalid arguments
@@ -1417,11 +1430,15 @@ def plot(spectrum, color = "darkviolet", title = "Spectrum", what_to_plot = "abs
     
     spacing = round_to_dig(spectrum_safe.spacing, 3)
     p_per_unit = floor(1/spectrum_safe.spacing)
+    if p_per_unit == 0:
+        p_per_unit = "< 1"
+    else:
+        p_per_unit = str(p_per_unit)
 
     if to_cut:
-        plt.text(1.05, 0.85, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) + "\nFull X-axis range: {} - {} ".format(inf, sup) + unit , transform = ax.transAxes)
+        plt.text(1.05, 0.75, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": " + p_per_unit + "\nFull X-axis range: {} - {} ".format(inf, sup) + unit  + "\nCentroid: {} ".format(round_to_dig(spectrum_safe.comp_quantile(0.5), 5)) + unit + "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit, transform = ax.transAxes)
     else:
-        plt.text(1.05, 0.9, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": {}".format(p_per_unit) , transform = ax.transAxes)
+        plt.text(1.05, 0.8, "Number of points: {}\nX-axis spacing: {} ".format(n_points, spacing) + unit + "\nPoints per 1 " + unit +": " + p_per_unit + "\nCentroid: {} ".format(round_to_dig(spectrum_safe.comp_quantile(0.5), 5), 5) + unit + "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit, transform = ax.transAxes)
 
     if save:
         plt.savefig("{}.jpg".format(title))
