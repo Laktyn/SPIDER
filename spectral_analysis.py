@@ -1748,6 +1748,15 @@ def hermitian_pulse(pol_num, bandwidth, centre, FWHM, num = 1000, x_type = "THz"
 
 
 def pkin_pulse(centre, width, num, x_type = "THz"):
+    '''
+    ### Creates spectrum in the shape of Palace of Culture and Science (pol. PKiN) 
+    The arguments "centre" and "width" characterize the pulse itself. The spectrum is composed of \"num\" = 1000 points on default.
+    The bandwidth is adjusted in such a way that the proportions of the building are preserved.
+    '''
+
+    if x_type not in ["THz", "kHz", "Hz", "nm", "time"]:
+        raise Exception("x_type must be either \"THz\", \"kHz\", \"Hz\", \"nm\" or \"time\"")
+
     X = np.linspace(-1, 1, 2400)
     Y = np.ones(1000)
 
@@ -1978,9 +1987,129 @@ def find_shear(sheared_spectrum, not_sheared_spectrum, smoothing_period = None, 
 
 
 
-#                   ---------
+#                   ----------
+#                   EOPM CLASS
+#                   ----------
+
+
+
+class EOPM:
+
+    def __init__(self, n0, n1):
+        self.n0 = n0
+        self.n1 = n1
+        self.length = 0.002
+        self.c = 299792458/1e12 # m/ps
+        self.on = False
+
+    def set_length(self, L):
+        self.length = L
+
+    def supply_current(self, current):
+
+        if current.x_type != "time":
+            raise Exception("The current must be given with respect to TIME.")
+        
+        self.on = True
+        self.current = current
+
+    def compute_changes(self, temporal_resolution):
+        '''
+        Compute the distance that the light will overcome in an infinitesimal moment of time.
+        '''
+
+        more_points = ceil(self.current.spacing/temporal_resolution)
+        self.current_hd = self.current.increase_resolution(more_points, inplace = False)
+
+        ref_indices = self.n0 + self.n1*self.current_hd.Y
+        velocities =  self.c/ref_indices
+        self.changes = velocities*self.current_hd.spacing
+
+    def find_time_delay(self, time_point):
+        
+        time_idx = np.searchsorted(self.current_hd.X, time_point)   # this is the index of this time point
+        index_start = self.current_hd.__len__() - time_idx          # and this is the time index when the pulse reaches the waveguide
+
+        changes_cum = np.cumsum(self.changes[index_start:])
+        time_delay_iter_abs = time_idx + np.where(changes_cum >= self.length)[0][0]
+        time_delay_abs = time_delay_iter_abs*self.current_hd.spacing
+        return time_delay_abs
+
+    def modulate_pulse(self, signal, carry_freq = 193, points_num = 50, temporal_resolution = 0.1, show_plot = False):
+
+        # Exceptions
+
+        if self.on == False:
+            raise Exception("Before modulating of the pulse supply the current to the modulator.")
+        
+        if signal.x_type != "time":
+             raise Exception("The signal must be given with respect to TIME.")
+        
+        # find pulse points for which we will find temporal phase
+        
+        time_start = signal.comp_quantile(0.001)
+        time_end = signal.comp_quantile(0.999)
+        times_of_focus = np.linspace(time_start, time_end, num = points_num, endpoint = True)
+
+        self.compute_changes(temporal_resolution)
+
+        temp_delays = []
+        for tau in times_of_focus:
+            temp_delays.append(self.find_time_delay(tau))
+
+        temp_delays = np.array(temp_delays)
+        temp_delays = temp_delays - times_of_focus
+
+        temporal_phases = temp_delays*carry_freq
+        temporal_phases -= np.mean(temporal_phases)
+        temporal_phases = np.unwrap(temporal_phases)
+        
+        phase_spectrum = spectrum(times_of_focus, temporal_phases, x_type = "time", y_type = "phase")
+
+        if show_plot:
+            # Create the figure and first axis
+            fig, ax1 = plt.subplots()
+
+            # Plot the first data set
+            ax1.plot(signal.X, signal.Y, color = "black")
+            ax1.set_xlabel('Time (ps)')
+            ax1.set_ylabel('Intensity')
+
+            # Create a second axis that shares the same X-axis
+            ax2 = ax1.twinx()
+
+            # Plot the second data set
+            ax2.scatter(times_of_focus, temporal_phases, color = "red")
+            ax2.set_ylabel("Phase (rad)")
+
+            # Add a title and show the plot
+            plt.title('Modulation effect')
+            fig.tight_layout()  # Adjusts the layout to prevent overlap
+
+            plt.xlim([-25,25])
+            plt.show()
+
+        modulated_signal = create_complex_spectrum(signal, phase_spectrum)
+
+        return modulated_signal
+    
+
+def current_source(pol_num, modulated_signal, ampl):
+
+    if modulated_signal.x_type == "THz":
+        new_X = modulated_signal.fourier(inplace = False).X
+    elif modulated_signal.x_type == "time":
+        new_X = modulated_signal.X
+    else:
+        raise Exception("The value \"modulated_signal\".x_type must be equal to either \"THz\" ot \"time\".")
+
+    return spectrum(new_X, ampl*np.linspace(-1, 1, len(new_X))**pol_num, "time", "current")
+    
+
+
+#                   ----------
 #                   BEAM CLASS
-#                   ---------
+#                   ----------
 
 
 
@@ -2068,15 +2197,14 @@ class beam:
         if transmission_polar == "hor":
             self.ver.Y *= 0
 
+
     def powermeter(self):
 
-        h = np.sum(self.hor.Y*np.conjugate(self.hor.Y))
-        v = np.sum(self.ver.Y*np.conjugate(self.ver.Y))
-        h = np.abs(h)
-        v = np.abs(v)
-        h = round(h)
-        v = round(v)
+        h = round(self.hor.power())
+        v = round(self.ver.power())
+
         print(u"Total power measured: {} \u03bcW\nPower on horizontal polarization: {} \u03bcW\nPower on vertical polarization: {} \u03bcW".format(h+v, h, v))
+
 
     def OSA(self, start = None, end = None, show_plot = True):
 
@@ -2087,6 +2215,28 @@ class beam:
             plot(spectr, title = "OSA", start = start, end = end, color = "green")
         
         return spectr
+    
+
+    def modulate(self, modulator, polarization, carry_freq = 193, points_num = 50, temporal_resolution = 1e-4):
+
+        if not isinstance(modulator, EOPM):
+            raise Exception("Tip: in order to MODULATE the beam, use the MODULATOR.")
+        
+        if modulator.on == False:
+            raise Exception("The modulator is turned off. Please supply the steering current before further actions.")
+        
+        if polarization not in ["ver", "hor"]:
+            raise Exception("Polarization must be either \"ver\" or \"hor\".")
+        
+        polarizations = {"ver" : self.hor,
+                         "hor" : self.ver}
+        
+        if polarization == "ver":
+            polarizations[polarization] = modulator.modulate_pulse(polarizations[polarization], 
+                                                                   carry_freq = carry_freq, 
+                                                                   points_num = points_num, 
+                                                                   temporal_resolution = temporal_resolution)
+
 
 
 
