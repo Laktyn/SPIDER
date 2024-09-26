@@ -641,29 +641,32 @@ class spectrum:
             return spectrum_safe
 
 
-    def comp_quantile(self, q, norm = "L1"):
+    def comp_quantile(self, q, norm = "L1", out = "unit"):
         '''
         ### Finds x in X axis such that the integral of the intensity to the \"x\" is fraction of value \"q\" of whole intensity. 
-        The\"norm\" is either \"L1\" or \"L2\".
+        The \"norm\" argument is either \"L1\" or \"L2\". The \"out\" argument is either \"unit\" or \"index\".
         '''
         if norm not in ["L1", "L2"]:
             raise Exception("The norm must be either \"L1\" or \"L2\".")
-        
-        integral = 0
+        if out not in ["unit", "index"]:
+            raise Exception("The \"out\" must be either \"unit\" or \"index\".")
+
         if norm == "L1":
             integral_infinite = np.sum(np.abs(self.Y))
+            integral = np.cumsum(np.abs(self.Y))
+
         if norm == "L2":
             integral_infinite = np.sum(self.Y*np.conjugate(self.Y))
+            integral = np.cumsum(self.Y*np.conjugate(self.Y))
+        
+        idx = np.searchsorted(integral, q*integral_infinite)
+        if idx == self.__len__(): 
+            idx -= 1
 
-        for i in range(self.__len__()):
-            if norm == "L1": integral += np.abs(self.Y[i])
-            if norm == "L2": integral += self.Y[i]*np.conjugate(self.Y[i])
-
-            if integral >= integral_infinite*q:
-                x = self.X[i]
-                break
-
-        return x
+        if out == "unit":
+            return self.X[idx]
+        elif out == "index":
+            return idx
     
 
     def comp_centre(self):
@@ -1421,8 +1424,8 @@ def plot(spectrum,
                 end_idx  = i
                 break
 
-        start_idx_intens = np.searchsorted(spectrum_safe.X, spectrum_safe.comp_quantile(0.001))
-        end_idx_intens = np.searchsorted(spectrum_safe.X, spectrum_safe.comp_quantile(0.999))
+        start_idx_intens = np.searchsorted(spectrum_safe.X, spectrum_safe.comp_quantile(0.005))
+        end_idx_intens = np.searchsorted(spectrum_safe.X, spectrum_safe.comp_quantile(0.995))
         start_idx = np.max([start_idx_phase, start_idx_intens])
         end_idx = np.min([end_idx_phase, end_idx_intens])
 
@@ -1512,7 +1515,7 @@ def plot(spectrum,
     spacing_txt = "\nX-axis spacing: {} ".format(spacing) + unit
     per_1_txt = "\nPoints per 1 " + unit +": " + p_per_unit
     full_range_txt = "\nFull X-axis range: {} : {} ".format(inf, sup) + unit
-    centr_txt = "\nCentroid: {} ".format(round_to_dig(spectrum_safe.comp_quantile(0.5), 5)) + unit
+    centr_txt = "\nCentroid: {} ".format(round(spectrum_safe.comp_quantile(0.5), 3)) + unit
     fwhm_txt =  "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit
     power_txt = "\nPower: {}".format(round_to_dig(spectrum_safe.comp_power(), 5))
 
@@ -1529,7 +1532,7 @@ def plot(spectrum,
     # additional info, what do you actually see
 
     views = {
-        "abs" : r"$\it{Absolute value}$",
+        "abs" : r"$\it{Absolute\.value}$",
         "real" : r"$\it{Real}$",
         "imag" : r"$\it{Imaginary}$",
         "complex" : r"$\it{Complex}$",
@@ -2020,6 +2023,7 @@ class EOPM:
 
         more_points = ceil(self.current.spacing/temporal_resolution)
         self.current_hd = self.current.increase_resolution(more_points, inplace = False)
+        self.current_hd.Y = np.real(self.current_hd.Y)
 
         ref_indices = self.n0 + self.n1*self.current_hd.Y
         velocities =  self.c/ref_indices
@@ -2031,24 +2035,36 @@ class EOPM:
         index_start = self.current_hd.__len__() - time_idx          # and this is the time index when the pulse reaches the waveguide
 
         changes_cum = np.cumsum(self.changes[index_start:])
+        '''
+        plt.close()
+        plt.plot(range(len(changes_cum)), changes_cum)
+        plt.show()
+        '''
+        if len(np.where(changes_cum >= self.length)[0]) == 0:
+            raise Exception("The pulse failed to propagate to the end of the modulator's waveguide. The furthest the pulse reached was {} mm.".format(1e3*changes_cum[-1]))
         time_delay_iter_abs = time_idx + np.where(changes_cum >= self.length)[0][0]
+
         time_delay_abs = time_delay_iter_abs*self.current_hd.spacing
         return time_delay_abs
 
-    def modulate_pulse(self, signal, carry_freq = 193, points_num = 50, temporal_resolution = 0.1, show_plot = False):
+    def find_modulated_signal(self, signal, carry_freq = 193, points_num = 50, temporal_resolution = 1e-6, show_plot = False):
 
         # Exceptions
 
         if self.on == False:
             raise Exception("Before modulating of the pulse supply the current to the modulator.")
-        
-        if signal.x_type != "time":
-             raise Exception("The signal must be given with respect to TIME.")
-        
+
+        if signal.x_type == "THz":
+            signal_2 = signal.fourier(inplace = False)
+        elif signal.x_type == "time":
+            signal_2 = signal.copy()
+        else:
+             raise Exception("The signal must be given with respect to \"THz\" or \"time\".")
+                
         # find pulse points for which we will find temporal phase
-        
-        time_start = signal.comp_quantile(0.001)
-        time_end = signal.comp_quantile(0.999)
+
+        time_start = signal_2.comp_quantile(0.001)
+        time_end = signal_2.comp_quantile(0.999)
         times_of_focus = np.linspace(time_start, time_end, num = points_num, endpoint = True)
 
         self.compute_changes(temporal_resolution)
@@ -2071,7 +2087,7 @@ class EOPM:
             fig, ax1 = plt.subplots()
 
             # Plot the first data set
-            ax1.plot(signal.X, signal.Y, color = "black")
+            ax1.plot(signal_2.X, signal_2.Y, color = "black")
             ax1.set_xlabel('Time (ps)')
             ax1.set_ylabel('Intensity')
 
@@ -2086,15 +2102,21 @@ class EOPM:
             plt.title('Modulation effect')
             fig.tight_layout()  # Adjusts the layout to prevent overlap
 
-            plt.xlim([-25,25])
+            plt.xlim([signal_2.comp_quantile(0.01)-signal_2.comp_FWHM()/2, signal_2.comp_quantile(0.99) + signal_2.comp_FWHM()/2])
             plt.show()
 
-        modulated_signal = create_complex_spectrum(signal, phase_spectrum)
+        modulated_signal = create_complex_spectrum(signal_2, phase_spectrum)
 
-        return modulated_signal
+        if signal.x_type == "THz":
+            modulated_signal.inv_fourier()
+            modulated_signal.X = modulated_signal.X + carry_freq
+            return modulated_signal
+
+        else:
+            return modulated_signal
     
 
-def current_source(pol_num, modulated_signal, ampl):
+def current_source(pol_num, modulated_signal, ampl, centr = 0):
 
     if modulated_signal.x_type == "THz":
         new_X = modulated_signal.fourier(inplace = False).X
@@ -2103,7 +2125,7 @@ def current_source(pol_num, modulated_signal, ampl):
     else:
         raise Exception("The value \"modulated_signal\".x_type must be equal to either \"THz\" ot \"time\".")
 
-    return spectrum(new_X, ampl*np.linspace(-1, 1, len(new_X))**pol_num, "time", "current")
+    return spectrum(new_X, ampl*((new_X-centr)/np.max(new_X))**pol_num, "time", "current")
     
 
 
@@ -2200,21 +2222,21 @@ class beam:
 
     def powermeter(self):
 
-        h = round(self.hor.power())
-        v = round(self.ver.power())
+        h = round(self.hor.comp_power())
+        v = round(self.ver.comp_power())
 
         print(u"Total power measured: {} \u03bcW\nPower on horizontal polarization: {} \u03bcW\nPower on vertical polarization: {} \u03bcW".format(h+v, h, v))
 
 
     def OSA(self, start = None, end = None, show_plot = True):
 
-        Y = self.hor.Y*np.conjugate(self.hor.Y) + self.ver.Y*np.conjugate(self.ver.Y)
-        spectr = spectrum(self.hor.X, Y, "THz", "intensity")
-        spectr.spacing = np.abs(spectr.spacing)
+        Y = np.abs(self.hor.Y) + np.abs(self.ver.Y)
+        signal = spectrum(self.hor.X, Y, "THz", "intensity")
+        signal.spacing = np.abs(signal.spacing)
         if show_plot:
-            plot(spectr, title = "OSA", start = start, end = end, color = "green")
+            plot(signal, title = "OSA", start = start, end = end, color = "green")
         
-        return spectr
+        return signal
     
 
     def modulate(self, modulator, polarization, carry_freq = 193, points_num = 50, temporal_resolution = 1e-4):
@@ -2228,14 +2250,19 @@ class beam:
         if polarization not in ["ver", "hor"]:
             raise Exception("Polarization must be either \"ver\" or \"hor\".")
         
-        polarizations = {"ver" : self.hor,
-                         "hor" : self.ver}
+        polarizations = {"ver" : self.ver,
+                         "hor" : self.hor}
         
-        if polarization == "ver":
-            polarizations[polarization] = modulator.modulate_pulse(polarizations[polarization], 
+        self.ver = modulator.find_modulated_signal(self.ver, 
+                                                carry_freq = carry_freq, 
+                                                points_num = points_num, 
+                                                temporal_resolution = temporal_resolution)
+        '''
+        polarizations[polarization] = modulator.find_modulated_signal(polarizations[polarization], 
                                                                    carry_freq = carry_freq, 
                                                                    points_num = points_num, 
                                                                    temporal_resolution = temporal_resolution)
+        '''
 
 
 
