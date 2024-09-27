@@ -1515,7 +1515,7 @@ def plot(spectrum,
     spacing_txt = "\nX-axis spacing: {} ".format(spacing) + unit
     per_1_txt = "\nPoints per 1 " + unit +": " + p_per_unit
     full_range_txt = "\nFull X-axis range: {} : {} ".format(inf, sup) + unit
-    centr_txt = "\nCentroid: {} ".format(round(spectrum_safe.comp_quantile(0.5), 3)) + unit
+    centr_txt = "\nCentroid: {} ".format(round(spectrum_safe.comp_quantile(0.5), 5)) + unit
     fwhm_txt =  "\nFWHM: {} ".format(round_to_dig(spectrum_safe.comp_FWHM(), 5)) + unit
     power_txt = "\nPower: {}".format(round_to_dig(spectrum_safe.comp_power(), 5))
 
@@ -1842,7 +1842,7 @@ def chirp_phase(bandwidth, centre, fiber_length, num):
     return l_0**2*fiber_length*D_l/(4*np.pi*c)*(omega-omega_mean)**2
 
 
-def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0.5, sampl_num = 500):
+def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0.5, sampl_num = 5000):
     '''
     ### Find relative shift between the spectra by computing the shift of the slope. 
     Precisely, one computes the difference between x-arguments, when spectrum reaches for the very first time 
@@ -1854,48 +1854,24 @@ def find_slope_shift(sheared_spectrum, not_sheared_spectrum, low = 0.1, high = 0
     sup_not_sheared = np.max(not_sheared_spectrum.Y)
 
     # left slope, sheared spectrum
-
     left_s = []
     for i in np.linspace(low, high, sampl_num):
-        for k in range(len(sheared_spectrum)):
-            if sheared_spectrum.Y[k] < i*sup_sheared:
-                continue
-            else: 
-                left_s.append(sheared_spectrum.X[k])
-                break
+        left_s.append(sheared_spectrum.X[np.where(sheared_spectrum.Y >= i*sup_sheared)[0][0]])
 
     # left slope, not sheared spectrum
-
     left_ns = []
     for i in np.linspace(low, high, sampl_num):
-        for k in range(len(not_sheared_spectrum)):
-            if not_sheared_spectrum.Y[k] < i*sup_not_sheared:
-                continue
-            else: 
-                left_ns.append(not_sheared_spectrum.X[k])
-                break
+        left_ns.append(not_sheared_spectrum.X[np.where(not_sheared_spectrum.Y >= i*sup_not_sheared)[0][0]])
 
-    # right slope, sheared spectrum
-
+    # left slope, sheared spectrum
     right_s = []
     for i in np.linspace(low, high, sampl_num):
-        for k in reversed(range(len(sheared_spectrum))):
-            if sheared_spectrum.Y[k] < i*sup_sheared:
-                continue
-            else: 
-                right_s.append(sheared_spectrum.X[k])
-                break
+        right_s.append(np.flip(sheared_spectrum.X)[np.where(np.flip(sheared_spectrum.Y) >= i*sup_sheared)[0][0]])
 
-    # right slope, not sheared spectrum
-
+    # left slope, not sheared spectrum
     right_ns = []
     for i in np.linspace(low, high, sampl_num):
-        for k in reversed(range(len(not_sheared_spectrum))):
-            if not_sheared_spectrum.Y[k] < i*sup_not_sheared:
-                continue
-            else: 
-                right_ns.append(not_sheared_spectrum.X[k])
-                break
+        right_ns.append(np.flip(not_sheared_spectrum.X)[np.where(np.flip(not_sheared_spectrum.Y) >= i*sup_not_sheared)[0][0]])
 
     left_shift = np.mean(np.array(left_s)-np.array(left_ns))
     right_shift = np.mean(np.array(right_s)-np.array(right_ns))
@@ -2016,13 +1992,14 @@ class EOPM:
         self.on = True
         self.current = current
 
-    def compute_changes(self, temporal_resolution):
+    def compute_changes(self, temporal_resolution, start_comp, end_comp):
         '''
         Compute the distance that the light will overcome in an infinitesimal moment of time.
         '''
 
         more_points = ceil(self.current.spacing/temporal_resolution)
-        self.current_hd = self.current.increase_resolution(more_points, inplace = False)
+        self.current_hd = self.current.cut(inplace = False, start = start_comp, end = end_comp)
+        self.current_hd = self.current_hd.increase_resolution(more_points, inplace = False)
         self.current_hd.Y = np.real(self.current_hd.Y)
 
         ref_indices = self.n0 + self.n1*self.current_hd.Y
@@ -2047,7 +2024,7 @@ class EOPM:
         time_delay_abs = time_delay_iter_abs*self.current_hd.spacing
         return time_delay_abs
 
-    def find_modulated_signal(self, signal, carry_freq = 193, points_num = 50, temporal_resolution = 1e-6, show_plot = False):
+    def find_modulated_signal(self, signal, carry_freq = 193, points_num = 50, temporal_resolution = 1e-7, show_plot = False):
 
         # Exceptions
 
@@ -2063,11 +2040,18 @@ class EOPM:
                 
         # find pulse points for which we will find temporal phase
 
-        time_start = signal_2.comp_quantile(0.001)
-        time_end = signal_2.comp_quantile(0.999)
-        times_of_focus = np.linspace(time_start, time_end, num = points_num, endpoint = True)
+        time_start = signal_2.comp_quantile(0.01)
+        time_end = signal_2.comp_quantile(0.99)
+        pulse_length = time_end - time_start
+        times_of_focus = np.linspace(time_start-pulse_length/10, time_end + pulse_length/10, num = points_num, endpoint = True)
 
-        self.compute_changes(temporal_resolution)
+        
+        prop_time = self.length/(self.c/self.n0)
+
+        time_start_comp = -300#signal_2.X[0] + (signal_2.X[-1] - time_end - 3*prop_time)
+        time_end_comp = 300#signal_2.X[0] + (signal_2.X[-1] - time_start + 3*prop_time)
+
+        self.compute_changes(temporal_resolution, time_start_comp, time_end_comp)
 
         temp_delays = []
         for tau in times_of_focus:
@@ -2079,7 +2063,7 @@ class EOPM:
         temporal_phases = temp_delays*carry_freq
         temporal_phases -= np.mean(temporal_phases)
         temporal_phases = np.unwrap(temporal_phases)
-        
+
         phase_spectrum = spectrum(times_of_focus, temporal_phases, x_type = "time", y_type = "phase")
 
         if show_plot:
@@ -2250,19 +2234,16 @@ class beam:
         if polarization not in ["ver", "hor"]:
             raise Exception("Polarization must be either \"ver\" or \"hor\".")
         
-        polarizations = {"ver" : self.ver,
-                         "hor" : self.hor}
-        
-        self.ver = modulator.find_modulated_signal(self.ver, 
-                                                carry_freq = carry_freq, 
-                                                points_num = points_num, 
-                                                temporal_resolution = temporal_resolution)
-        '''
-        polarizations[polarization] = modulator.find_modulated_signal(polarizations[polarization], 
-                                                                   carry_freq = carry_freq, 
-                                                                   points_num = points_num, 
-                                                                   temporal_resolution = temporal_resolution)
-        '''
+        if polarization == "ver":
+            self.ver = modulator.find_modulated_signal(self.ver, 
+                                                    carry_freq = carry_freq, 
+                                                    points_num = points_num, 
+                                                    temporal_resolution = temporal_resolution)
+        if polarization == "hor":
+            self.ver = modulator.find_modulated_signal(self.hor, 
+                                                    carry_freq = carry_freq, 
+                                                    points_num = points_num, 
+                                                    temporal_resolution = temporal_resolution)
 
 
 
@@ -2756,10 +2737,10 @@ def spider(phase_spectrum,
 
         discrete_Y = np.array([interpolated_phase.Y[np.searchsorted(interpolated_phase.X, x)] for x in X_sampled])
 
-        plt.plot(interpolated_phase.X, interpolated_phase.Y - np.min(interpolated_phase.Y), color = "darkorange", zorder = 5)
+        plt.plot(interpolated_phase.X, interpolated_phase.Y - np.min(interpolated_phase.Y), color = "darkviolet", zorder = 5)
         plt.scatter(X_sampled, discrete_Y - np.min(interpolated_phase.Y), color = "green", zorder = 10, s = 9)
         plt.fill_between(intensity.X, np.abs(intensity.Y/np.max(np.abs(intensity.Y))*np.max(np.abs(interpolated_phase.Y))), 
-            color = "darkviolet", 
+            color = "darkorange", 
             alpha = 0.5, 
             zorder = 0)
         plt.title("Phase reconstruction")
