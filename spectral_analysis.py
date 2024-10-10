@@ -1330,7 +1330,6 @@ def find_maxima(fringes_spectrum):
 
 
 def plot(spectrum, 
-         color = "darkviolet", 
          title = "Spectrum", 
          what_to_plot = "trigonometric", 
          start = None, end = None, 
@@ -1342,8 +1341,6 @@ def plot(spectrum,
     ARGUMENTS:
 
     spectrum - the spectrum object class to be plotted.
-
-    color - color of the plot.
 
     title - title of the plot.
 
@@ -1400,6 +1397,17 @@ def plot(spectrum,
     if what_to_plot == "imag":
         spectrum_safe.Y = np.imag(spectrum_safe.Y)
 
+    # a bit of aesthetics
+
+    if spectrum_safe.x_type == "THz":
+        main_color = "orange"
+    elif spectrum_safe.x_type == "time":
+        main_color = "lawngreen"
+    elif spectrum_safe.x_type == "nm":
+        main_color = "aqua"
+    else:
+        main_color = "yellow"
+
     # start to plot
 
     fig, ax = plt.subplots()
@@ -1431,7 +1439,7 @@ def plot(spectrum,
 
         phase = np.unwrap(phase)
 
-        ax.fill_between(spectrum_safe.X, intensity, color = "orange", alpha = 0.5, label = "Intensity")
+        ax.fill_between(spectrum_safe.X, intensity, color = main_color, alpha = 0.5, label = "Intensity")
         phase_ax = ax.twinx()
         phase_ax.plot(spectrum_safe.X[start_idx: end_idx], phase[start_idx: end_idx], color = "darkviolet", label = "Phase")
         phase_ax.set_ylabel("Phase (rad)")
@@ -1441,7 +1449,7 @@ def plot(spectrum,
         phase_ax.legend(lines + lines2, labels + labels2, loc=0)
 
     else:
-        ax.plot(spectrum_safe.X, spectrum_safe.Y, color = color)
+        ax.plot(spectrum_safe.X, spectrum_safe.Y, color = main_color)
         if spectrum_safe.y_type == "intensity":
             ax.set_ylim([min([0, np.min(spectrum_safe.Y)]), 1.1*np.max(spectrum_safe.Y)])
      
@@ -2024,7 +2032,7 @@ class EOPM:
         time_delay_abs = time_delay_iter_abs*self.current_hd.spacing
         return time_delay_abs
 
-    def find_modulated_signal(self, signal, carry_freq = 193, points_num = 50, temporal_resolution = 1e-7, show_plot = False):
+    def find_modulated_signal(self, signal, carry_freq = 193, points_num = 50, temporal_resolution = 1e-5, show_plot = False):
 
         # Exceptions
 
@@ -2040,16 +2048,18 @@ class EOPM:
                 
         # find pulse points for which we will find temporal phase
 
-        time_start = signal_2.comp_quantile(0.01)
-        time_end = signal_2.comp_quantile(0.99)
+        time_start = signal_2.comp_quantile(0.001)
+        time_end = signal_2.comp_quantile(0.999)
+
         pulse_length = time_end - time_start
         times_of_focus = np.linspace(time_start-pulse_length/10, time_end + pulse_length/10, num = points_num, endpoint = True)
 
         
         prop_time = self.length/(self.c/self.n0)
+        print(prop_time)
 
-        time_start_comp = -300#signal_2.X[0] + (signal_2.X[-1] - time_end - 3*prop_time)
-        time_end_comp = 300#signal_2.X[0] + (signal_2.X[-1] - time_start + 3*prop_time)
+        time_start_comp = -200#signal_2.X[0] + (signal_2.X[-1] - time_end - 3*prop_time)
+        time_end_comp = 200#signal_2.X[0] + (signal_2.X[-1] - time_start + 3*prop_time)
 
         self.compute_changes(temporal_resolution, time_start_comp, time_end_comp)
 
@@ -2089,7 +2099,7 @@ class EOPM:
             plt.xlim([signal_2.comp_quantile(0.01)-signal_2.comp_FWHM()/2, signal_2.comp_quantile(0.99) + signal_2.comp_FWHM()/2])
             plt.show()
 
-        modulated_signal = create_complex_spectrum(signal_2, phase_spectrum)
+        modulated_signal = create_complex_spectrum(signal_2, phase_spectrum, extrapolate = True)
 
         if signal.x_type == "THz":
             modulated_signal.inv_fourier()
@@ -2159,7 +2169,7 @@ class beam:
 
     def rotate(self, angle):    # there is small problem because after rotation interference pattern are the same and should be negatives
         
-        hor = np.cos(angle)*self.hor.Y + np.sin(angle)*self.ver.Y
+        hor = np.cos(angle)*self.hor.Y - np.sin(angle)*self.ver.Y
         ver = np.sin(angle)*self.hor.Y + np.cos(angle)*self.ver.Y
 
         self.hor.Y = hor
@@ -2223,7 +2233,7 @@ class beam:
         return signal
     
 
-    def modulate(self, modulator, polarization, carry_freq = 193, points_num = 50, temporal_resolution = 1e-4):
+    def modulate(self, modulator, polarization, carry_freq = 193, points_num = 50, temporal_resolution = 1e-5):
 
         if not isinstance(modulator, EOPM):
             raise Exception("Tip: in order to MODULATE the beam, use the MODULATOR.")
